@@ -3,15 +3,19 @@ let socket;
 
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.type === 'start-capture') {
-    await startCapture(message.tabId);
+    await startCapture(message.streamId);
   } else if (message.type === 'stop-capture') {
     stopCapture();
   }
 });
 
-async function startCapture(tabId) {
+async function startCapture(streamId) {
+  if (!streamId) {
+    console.error('Offscreen: No stream ID received.');
+    return;
+  }
+
   try {
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {

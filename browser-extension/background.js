@@ -50,9 +50,12 @@ async function setupOffscreenDocument(tabId) {
     contextTypes: ['OFFSCREEN_DOCUMENT']
   });
 
+  // Get the stream ID from the service worker.
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
   if (existingContexts.length > 0) {
     // Send a message to the existing document to start capture.
-    chrome.runtime.sendMessage({ type: 'start-capture', tabId: tabId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
     return;
   }
 
@@ -68,7 +71,7 @@ async function setupOffscreenDocument(tabId) {
     await creating;
     creating = null;
     // Now that the document is created, send the start message.
-    chrome.runtime.sendMessage({ type: 'start-capture', tabId: tabId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
   }
 }
 
