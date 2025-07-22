@@ -1,5 +1,6 @@
 let mediaRecorder;
 let socket;
+let audioContext;
 
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.type === 'start-capture') {
@@ -25,6 +26,11 @@ async function startCapture(streamId) {
       },
       video: false
     });
+
+    // Play the captured audio back to the user
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(audioContext.destination);
 
     // Connect to backend for processing
     socket = new WebSocket('ws://localhost:8000/ws');
@@ -57,6 +63,9 @@ function stopCapture() {
   }
   if (socket) {
     socket.close();
+  }
+  if (audioContext) {
+    audioContext.close();
   }
   console.log('Offscreen: Audio capture stopped.');
   // This will close the offscreen document.
