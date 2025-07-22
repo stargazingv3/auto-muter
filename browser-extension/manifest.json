@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Muter",
+  "version": "0.1.0",
+  "description": "Automatically mute a tab based on who is speaking.",
+  "permissions": [
+    "tabCapture",
+    "offscreen"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
