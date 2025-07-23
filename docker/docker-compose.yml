@@ -17,6 +17,8 @@ services:
               count: all
               capabilities: [gpu]
     shm_size: '16g'
+    environment:
+      - HF_AUTH_TOKEN
 
 networks:
   default:
