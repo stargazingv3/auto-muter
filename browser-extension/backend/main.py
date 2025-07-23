@@ -31,7 +31,7 @@ async def load_target_speaker_embedding():
 async def startup_event():
     await load_target_speaker_embedding()
 
-def is_target_speaker(audio_data: bytes) -> bool:
+def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
     """
     This function will now use the ML model to detect the target speaker.
     """
@@ -55,10 +55,10 @@ def is_target_speaker(audio_data: bytes) -> bool:
 
         is_target = similarity.item() > THRESHOLD
         print(f"Similarity: {similarity.item():.4f}, Is Target: {is_target}")
-        return is_target
+        return is_target, similarity.item()
     except Exception as e:
         print(f"Error during speaker detection: {e}")
-        return False
+        return False, 0.0
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -66,10 +66,21 @@ async def websocket_endpoint(websocket: WebSocket):
     while True:
         data = await websocket.receive_bytes()
         print(f"Received {len(data)} bytes of audio data")
-        if is_target_speaker(data):
-            await websocket.send_text("MUTE")
-            print("Sent: MUTE")
+        is_target, similarity_score = is_target_speaker(data)
+        if is_target:
+            response_data = {
+                "action": "MUTE",
+                "similarity": similarity_score,
+                "isTargetSpeaker": is_target
+            }
+            await websocket.send_json(response_data)
+            print(f"Sent: {response_data}")
         else:
-            await websocket.send_text("UNMUTE")
-            print("Sent: UNMUTE")
+            response_data = {
+                "action": "UNMUTE",
+                "similarity": similarity_score,
+                "isTargetSpeaker": is_target
+            }
+            await websocket.send_json(response_data)
+            print(f"Sent: {response_data}")
 
