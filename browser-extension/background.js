@@ -1,4 +1,5 @@
 let isCapturing = false;
+let targetTabId;
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'GET_STATE') {
@@ -10,6 +11,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     startCapture();
   } else if (request.type === 'STOP_CAPTURE') {
     stopCapture();
+  } else if (request.type === 'SET_MUTE') {
+    if (targetTabId) {
+      chrome.tabs.update(targetTabId, { muted: request.mute });
+      console.log(`Background: Tab ${targetTabId} mute state set to ${request.mute}`);
+    }
   }
   return true;
 });
@@ -25,9 +31,9 @@ async function startCapture() {
     console.error('No active tab found.');
     return;
   }
-  const targetTab = tabs[0];
+  targetTabId = tabs[0].id;
 
-  await setupOffscreenDocument(targetTab.id);
+  await setupOffscreenDocument(targetTabId);
   isCapturing = true;
   console.log('Background: Capture started.');
 }

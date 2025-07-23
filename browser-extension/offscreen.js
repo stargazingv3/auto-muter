@@ -35,7 +35,11 @@ async function startCapture(streamId) {
     // Connect to backend for processing
     socket = new WebSocket('ws://localhost:8000/ws');
     socket.onopen = () => console.log('Offscreen: WebSocket connection opened.');
-    socket.onmessage = (event) => console.log('Offscreen: Message from server:', event.data);
+    socket.onmessage = (event) => {
+      console.log('Offscreen: Message from server:', event.data);
+      // Send mute/unmute command to the background script
+      chrome.runtime.sendMessage({ type: 'SET_MUTE', mute: event.data === 'MUTE' });
+    };
     socket.onclose = () => console.log('Offscreen: WebSocket connection closed.');
     socket.onerror = (error) => console.error('Offscreen: WebSocket error:', error);
 
