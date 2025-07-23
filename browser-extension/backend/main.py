@@ -13,7 +13,7 @@ app = FastAPI()
 # Initialize pyannote.audio inference model
 inference_model = Inference("pyannote/embedding", device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), use_auth_token=HF_TOKEN)
 
-TARGET_SPEAKER_MP3 = "./browser-extension/backend/target_speaker.mp3"
+TARGET_SPEAKER_MP3 = "/app/target_speaker.mp3"
 target_speaker_embedding = None
 
 async def load_target_speaker_embedding():
@@ -65,9 +65,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_bytes()
-        # print(f"Received {len(data)} bytes of audio data") # Commented to reduce log spam
+        print(f"Received {len(data)} bytes of audio data")
         if is_target_speaker(data):
             await websocket.send_text("MUTE")
+            print("Sent: MUTE")
         else:
             await websocket.send_text("UNMUTE")
+            print("Sent: UNMUTE")
 
