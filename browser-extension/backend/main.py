@@ -17,6 +17,12 @@ SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps" # Adjust this path as needed
 os.makedirs(SAVE_ERROR_AUDIO_DIR, exist_ok=True)
 print(f"ERROR AUDIO DUMP DIRECTORY: {SAVE_ERROR_AUDIO_DIR}") # Confirm path at startup
 
+# --- Configuration for saving successful audio ---
+SAVE_SUCCESS_AUDIO_DIR = "/app/success_audio_dumps" # New directory for successful decodes
+os.makedirs(SAVE_SUCCESS_AUDIO_DIR, exist_ok=True)
+print(f"SUCCESS AUDIO DUMP DIRECTORY: {SAVE_SUCCESS_AUDIO_DIR}") # Confirm path at startup
+
+
 # --- Existing App Setup ---
 HF_TOKEN = os.getenv("HF_AUTH_TOKEN")
 if not HF_TOKEN:
@@ -54,6 +60,7 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
     Uses the ML model to detect the target speaker after converting
     the incoming audio data (e.g., WebM) to WAV format in memory.
     Saves the incoming raw audio data if decoding or processing fails.
+    Also saves successfully decoded and processed WAV audio.
     """
     if target_speaker_embedding is None:
         print("Target speaker embedding not loaded. Cannot perform detection.")
@@ -69,7 +76,6 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
 
         # --- Attempt pydub conversion from raw bytes ---
         # Assuming the incoming audio_data is WebM (opus) from MediaRecorder.
-        # This is the line that's causing the "Decoding failed" error.
         audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="webm")
         print(f"{log_prefix} pydub conversion successful. Length: {audio_segment.duration_seconds:.2f}s")
 
@@ -84,6 +90,17 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         audio_segment.export(wav_file_in_memory, format="wav")
         wav_file_in_memory.seek(0) # Rewind the buffer to the beginning
         print(f"{log_prefix} Audio exported to WAV in memory.")
+
+        # --- Save successful WAV audio ---
+        try:
+            saved_success_filename = f"success_decode_processed_audio_{timestamp}_{unique_id}.wav"
+            saved_success_path = os.path.join(SAVE_SUCCESS_AUDIO_DIR, saved_success_filename)
+            with open(saved_success_path, "wb") as f:
+                f.write(wav_file_in_memory.getvalue()) # Get the bytes from BytesIO
+            print(f"{log_prefix} Processed WAV audio saved to: {saved_success_path}")
+        except Exception as save_success_e:
+            print(f"WARNING {log_prefix}: Failed to save successful WAV audio file: {save_success_e}")
+
 
         # 4. Compute embedding for the live audio chunk using the WAV data
         live_audio_embedding = inference_model(wav_file_in_memory)
