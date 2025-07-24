@@ -1,0 +1,3 @@
+python scripts/similarity.py browser-extension/backend/tmp/sample1.webm --target_speaker browser-extension/backend/target_speaker.mp3
+
+docker-compose run --rm backend bash
