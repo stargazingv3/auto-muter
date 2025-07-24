@@ -26,7 +26,7 @@ app = FastAPI()
 
 inference_model = Inference("pyannote/embedding", device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), use_auth_token=HF_TOKEN)
 
-TARGET_SPEAKER_MP3 = "/app/target_speaker.mp3"
+TARGET_SPEAKER_MP3 = "/app/browser-extension/backend/target_speaker.mp3"
 target_speaker_embedding = None
 
 async def load_target_speaker_embedding():
