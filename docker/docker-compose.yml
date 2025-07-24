@@ -5,10 +5,12 @@ services:
       dockerfile: docker/Dockerfile
     image: ikon/auto-muter-backend:latest-1
     volumes:
-      - ../browser-extension/backend:/app
+      - ..:/app
+      - /data:/data
     ports:
       - "8000:8000"
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    working_dir: /app
+    command: ["uvicorn", "browser-extension.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
     deploy:
       resources:
         reservations:
@@ -19,6 +21,7 @@ services:
     shm_size: '16g'
     environment:
       - HF_AUTH_TOKEN
+    user: "${PUID}:${PGID}"
 
 networks:
   default:
