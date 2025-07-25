@@ -1,27 +1,67 @@
 let isCapturing = false;
-let targetTabId;
 
+// Main message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'GET_STATE') {
-    sendResponse({ isCapturing });
-    return true; // Keep the message channel open for async response
-  }
+  // Use a an async IIFE (Immediately Invoked Function Expression) to handle async logic
+  // This is a common pattern for keeping the top-level of the listener synchronous
+  // to avoid issues with the service worker.
+  (async () => {
+    if (request.type === 'GET_STATE') {
+      const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
+      sendResponse({ isCapturing: !!capturing });
+    } else if (request.type === 'START_CAPTURE') {
+      await startCapture();
+      sendResponse({ success: true });
+    } else if (request.type === 'STOP_CAPTURE') {
+      await stopCapture();
+      sendResponse({ success: true });
+    } else if (request.type === 'SET_MUTE') {
+      console.log(`Background: Received SET_MUTE message. Mute: ${request.mute}`);
+      try {
+        const { targetTabId } = await chrome.storage.session.get("targetTabId");
+        console.log(`Background: Retrieved targetTabId from storage: ${targetTabId}`);
 
-  if (request.type === 'START_CAPTURE') {
-    startCapture();
-  } else if (request.type === 'STOP_CAPTURE') {
-    stopCapture();
-  } else if (request.type === 'SET_MUTE') {
-    if (targetTabId) {
-      chrome.tabs.update(targetTabId, { muted: request.mute });
-      console.log(`Background: Tab ${targetTabId} mute state set to ${request.mute}`);
+        if (targetTabId) {
+          console.log(`Background: Attempting to update mute state for tab ${targetTabId} to ${request.mute}`);
+          await chrome.tabs.update(targetTabId, { muted: request.mute });
+
+          if (chrome.runtime.lastError) {
+            console.error(`Background: Error setting mute state: ${chrome.runtime.lastError.message}`);
+          } else {
+            console.log(`Background: Successfully updated mute state for tab ${targetTabId}.`);
+          }
+        } else {
+          console.error("Background: Could not find targetTabId in session storage. Cannot set mute state.");
+        }
+      } catch (error) {
+        console.error(`Background: An unexpected error occurred while setting mute state: ${error}`);
+      }
+    } else if (request.type === 'TEST_MUTE') {
+      console.log("Background: Received TEST_MUTE request.");
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs.length > 0) {
+          const tabToMute = tabs[0];
+          // Toggle mute state for testing
+          const newMuteState = !tabToMute.mutedInfo.muted;
+          await chrome.tabs.update(tabToMute.id, { muted: newMuteState });
+          console.log(`Background (Test): Successfully toggled mute for tab ${tabToMute.id} to ${newMuteState}`);
+        } else {
+          console.error("Background (Test): No active tab found.");
+        }
+      } catch (error) {
+        console.error(`Background (Test): Error during test mute: ${error}`);
+      }
     }
-  }
+  })();
+
+  // Return true to indicate that we will respond asynchronously.
   return true;
 });
 
 async function startCapture() {
-  if (isCapturing) {
+  const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
+  if (capturing) {
     console.log('Capture is already in progress.');
     return;
   }
@@ -31,41 +71,44 @@ async function startCapture() {
     console.error('No active tab found.');
     return;
   }
-  targetTabId = tabs[0].id;
+  const targetTabId = tabs[0].id;
+
+  // Save state to session storage
+  await chrome.storage.session.set({ targetTabId: targetTabId, isCapturing: true });
 
   await setupOffscreenDocument(targetTabId);
-  isCapturing = true;
   console.log('Background: Capture started.');
 }
 
 async function stopCapture() {
-  if (!isCapturing) {
+  const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
+  if (!capturing) {
     console.log('Capture is not in progress.');
     return;
   }
+
+  // Clean up storage
+  await chrome.storage.session.remove(["targetTabId", "isCapturing"]);
+
   // The offscreen document will close itself when capture stops.
   await chrome.runtime.sendMessage({ type: 'stop-capture' });
-  isCapturing = false;
   console.log('Background: Capture stopped.');
 }
 
+// --- Offscreen Document Setup ---
 let creating; // A global promise to avoid racing createDocument calls
 async function setupOffscreenDocument(tabId) {
-  // Check if we have an existing offscreen document.
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT']
   });
 
-  // Get the stream ID from the service worker.
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
 
   if (existingContexts.length > 0) {
-    // Send a message to the existing document to start capture.
     chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
     return;
   }
 
-  // Avoid race conditions with creating the document.
   if (creating) {
     await creating;
   } else {
@@ -76,8 +119,6 @@ async function setupOffscreenDocument(tabId) {
     });
     await creating;
     creating = null;
-    // Now that the document is created, send the start message.
     chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
   }
 }
-

@@ -140,7 +140,7 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         print(f"{log_prefix} Similarity for live audio: {similarity.item():.4f}")
 
         # 6. Define a threshold for detection. This will likely need tuning.
-        THRESHOLD = 0.65 # Tunable: lower if missing target, higher if too many false positives
+        THRESHOLD = 0.1 # Tunable: lower if missing target, higher if too many false positives
 
         is_target = similarity.item() > THRESHOLD
         print(f"{log_prefix} Similarity: {similarity.item():.4f}, Is Target: {is_target}")

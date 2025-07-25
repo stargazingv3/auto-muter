@@ -52,8 +52,9 @@ async function startCapture(streamId) {
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       console.log('Offscreen: Message from server:', data);
-      // Send mute/unmute command to the background script
-      chrome.runtime.sendMessage({ type: 'SET_MUTE', mute: data.action === 'MUTE' });
+      const muteState = data.action === 'MUTE';
+      console.log(`Offscreen: Sending SET_MUTE message to background. Mute: ${muteState}`);
+      chrome.runtime.sendMessage({ type: 'SET_MUTE', mute: muteState });
     };
     socket.onclose = () => console.log('Offscreen: WebSocket connection closed.');
     socket.onerror = (error) => console.error('Offscreen: WebSocket error:', error);

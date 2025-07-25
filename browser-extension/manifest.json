@@ -5,7 +5,9 @@
   "description": "Automatically mute a tab based on who is speaking.",
   "permissions": [
     "tabCapture",
-    "offscreen"
+    "offscreen",
+    "tabs",
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"
