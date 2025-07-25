@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ikon/auto-muter-backend:latest-1
+    image: ikon/auto-muter-backend:speechbrain
     volumes:
       - ..:/app
       - /data:/data
