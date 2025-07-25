@@ -133,7 +133,6 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
             target_speaker_embedding_for_comparison = target_speaker_embedding
         # --- FIX END ---
 
-
         # 5. Compare embeddings using cosine similarity
         similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, target_speaker_embedding_for_comparison)
         
