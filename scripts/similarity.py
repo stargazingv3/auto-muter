@@ -4,8 +4,8 @@ import io
 import os
 from pydub import AudioSegment
 import argparse
-from pyannote.core import SlidingWindowFeature # Import this for type hinting/clarity
-import warnings # Import warnings to suppress them if needed
+from pyannote.core import SlidingWindowFeature
+import warnings
 
 # --- Configuration ---
 HF_TOKEN = os.getenv("HF_AUTH_TOKEN") # Replace with your actual token if not using env var
@@ -119,21 +119,45 @@ def calculate_similarity(target_speaker_embedding, audio_file_path: str) -> tupl
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Calculate audio similarity to a target speaker.")
-    parser.add_argument("audio_file", type=str,
-                        help="Path to the audio file (e.g., .webm, .mp3) to analyze.")
+    parser.add_argument("--input_path", type=str, required=True,
+                        help="Path to an audio file (e.g., .webm, .mp3) or a directory containing audio files to analyze.")
     parser.add_argument("--target_speaker", type=str, default=TARGET_SPEAKER_MP3,
                         help=f"Path to the target speaker MP3 file (default: {TARGET_SPEAKER_MP3}).")
     args = parser.parse_args()
 
     # Suppress specific UserWarning from torchaudio if it's not relevant to your use case
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning) # Or target specific warnings if desired
+        warnings.simplefilter("ignore", UserWarning)
         load_target_speaker_embedding(args.target_speaker)
 
-    if target_speaker_embedding is not None:
-        is_target, similarity_score = calculate_similarity(target_speaker_embedding, args.audio_file)
-        print(f"\nAnalysis Result for {args.audio_file}:")
+    if target_speaker_embedding is None:
+        print("\nCould not perform analysis as target speaker embedding was not loaded. Exiting.")
+        exit(1)
+
+    audio_files_to_process = []
+    if os.path.isfile(args.input_path):
+        audio_files_to_process.append(args.input_path)
+    elif os.path.isdir(args.input_path):
+        print(f"Searching for audio files in directory: {args.input_path}")
+        for root, _, files in os.walk(args.input_path):
+            for file in files:
+                # Add more audio extensions if needed
+                if file.lower().endswith((".mp3", ".wav", ".flac", ".ogg", ".webm")):
+                    audio_files_to_process.append(os.path.join(root, file))
+        if not audio_files_to_process:
+            print(f"No supported audio files found in {args.input_path} or its subdirectories.")
+            exit(0)
+    else:
+        print(f"Error: Provided input_path '{args.input_path}' is neither a file nor a directory.")
+        exit(1)
+
+    print(f"\n--- Starting Analysis for {len(audio_files_to_process)} Audio File(s) ---")
+    for audio_file in audio_files_to_process:
+        print(f"\nAnalyzing: {audio_file}")
+        is_target, similarity_score = calculate_similarity(target_speaker_embedding, audio_file)
+        print(f"Analysis Result for {os.path.basename(audio_file)}:")
         print(f"  Is Target Speaker: {is_target}")
         print(f"  Similarity Score: {similarity_score:.4f}")
-    else:
-        print("\nCould not perform analysis as target speaker embedding was not loaded.")
+        print("-" * 30)
+
+    print("\n--- Analysis Complete ---")

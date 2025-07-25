@@ -9,6 +9,7 @@ from pydub import AudioSegment
 from datetime import datetime
 import uuid
 import shutil # Import shutil for file copying
+from pyannote.core import SlidingWindowFeature # Import SlidingWindowFeature
 
 # --- Configuration for saving error audio ---
 SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps" # Adjust this path as needed
@@ -30,7 +31,8 @@ if not HF_TOKEN:
 
 app = FastAPI()
 
-inference_model = Inference("pyannote/embedding", device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), use_auth_token=HF_TOKEN)
+# MODIFIED: Add window="whole" to Inference
+inference_model = Inference("pyannote/embedding", device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), use_auth_token=HF_TOKEN, window="whole")
 
 TARGET_SPEAKER_MP3 = "/app/browser-extension/backend/target_speaker.mp3"
 target_speaker_embedding = None
@@ -44,7 +46,19 @@ async def load_target_speaker_embedding():
 
     try:
         print(f"Attempting to load target speaker embedding from {TARGET_SPEAKER_MP3}...")
-        target_speaker_embedding = inference_model(TARGET_SPEAKER_MP3)
+        embedding_output = inference_model(TARGET_SPEAKER_MP3)
+        # Handle different output types from inference_model
+        if isinstance(embedding_output, SlidingWindowFeature):
+            target_speaker_embedding = torch.from_numpy(embedding_output.data).mean(axis=0, keepdim=True).to(inference_model.device)
+        elif isinstance(embedding_output, torch.Tensor):
+            target_speaker_embedding = embedding_output.to(inference_model.device)
+        else: # Handle case if it's a numpy array directly
+            target_speaker_embedding = torch.from_numpy(embedding_output).to(inference_model.device)
+
+        # Ensure the embedding is 2D (batch_size, embedding_dim)
+        if target_speaker_embedding.dim() == 1:
+            target_speaker_embedding = target_speaker_embedding.unsqueeze(0)
+
         print("Target speaker embedding loaded successfully.")
     except Exception as e:
         print(f"Error loading target speaker embedding: {e}")
@@ -71,6 +85,8 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_prefix = f"[{timestamp}-{unique_id}]"
 
+    saved_success_path = None # Initialize to None
+
     try:
         print(f"{log_prefix} Received {len(audio_data)} bytes for processing.")
 
@@ -85,29 +101,44 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
             print(f"{log_prefix} Resampling audio from {audio_segment.frame_rate}Hz, {audio_segment.channels} channels to 16000Hz, 1 channel.")
             audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
 
-        # 3. Export to WAV format in an in-memory BytesIO object
-        wav_file_in_memory = io.BytesIO()
-        audio_segment.export(wav_file_in_memory, format="wav")
-        wav_file_in_memory.seek(0) # Rewind the buffer to the beginning
-        print(f"{log_prefix} Audio exported to WAV in memory.")
-
-        # --- Save successful WAV audio ---
-        try:
-            saved_success_filename = f"success_decode_processed_audio_{timestamp}_{unique_id}.wav"
-            saved_success_path = os.path.join(SAVE_SUCCESS_AUDIO_DIR, saved_success_filename)
-            with open(saved_success_path, "wb") as f:
-                f.write(wav_file_in_memory.getvalue()) # Get the bytes from BytesIO
-            print(f"{log_prefix} Processed WAV audio saved to: {saved_success_path}")
-        except Exception as save_success_e:
-            print(f"WARNING {log_prefix}: Failed to save successful WAV audio file: {save_success_e}")
+        # 3. Export to WAV format directly to a file
+        saved_success_filename = f"success_decode_processed_audio_{timestamp}_{unique_id}.wav"
+        saved_success_path = os.path.join(SAVE_SUCCESS_AUDIO_DIR, saved_success_filename)
+        audio_segment.export(saved_success_path, format="wav")
+        print(f"{log_prefix} Audio exported to WAV file: {saved_success_path}")
 
 
-        # 4. Compute embedding for the live audio chunk using the WAV data
-        live_audio_embedding = inference_model(wav_file_in_memory)
-        print(f"{log_prefix} Embedding computed for live audio.")
+        # 4. Compute embedding for the live audio chunk using the SAVED WAV file
+        live_audio_embedding_output = inference_model(saved_success_path)
+        print(f"{log_prefix} Embedding computed for live audio from saved file.")
+
+        # --- FIX START: Handle possible SlidingWindowFeature output and ensure tensor dimensions ---
+        if isinstance(live_audio_embedding_output, SlidingWindowFeature):
+            live_audio_embedding = torch.from_numpy(live_audio_embedding_output.data).mean(axis=0, keepdim=True).to(inference_model.device)
+            print(f"{log_prefix} Converted SlidingWindowFeature to Tensor. Shape: {live_audio_embedding.shape}")
+        elif isinstance(live_audio_embedding_output, torch.Tensor):
+            live_audio_embedding = live_audio_embedding_output.to(inference_model.device)
+        else:
+            live_audio_embedding = torch.from_numpy(live_audio_embedding_output).to(inference_model.device)
+            print(f"{log_prefix} Converted numpy array to Tensor. Shape: {live_audio_embedding.shape}")
+
+        # Ensure both embeddings have the same number of dimensions (e.g., [1, D])
+        if live_audio_embedding.dim() == 1:
+            live_audio_embedding = live_audio_embedding.unsqueeze(0)
+        # target_speaker_embedding should already be unsqueezed from load_target_speaker_embedding
+        # but a defensive check here doesn't hurt, though it might indicate an issue there if it triggers.
+        if target_speaker_embedding.dim() == 1:
+            target_speaker_embedding_for_comparison = target_speaker_embedding.unsqueeze(0)
+        else:
+            target_speaker_embedding_for_comparison = target_speaker_embedding
+        # --- FIX END ---
+
 
         # 5. Compare embeddings using cosine similarity
-        similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, target_speaker_embedding)
+        similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, target_speaker_embedding_for_comparison)
+        
+        # Log the similarity item here, after it's calculated
+        print(f"{log_prefix} Similarity for live audio: {similarity.item():.4f}")
 
         # 6. Define a threshold for detection. This will likely need tuning.
         THRESHOLD = 0.65 # Tunable: lower if missing target, higher if too many false positives
@@ -134,6 +165,16 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
             print(f"CRITICAL ERROR {log_prefix}: Failed to save problematic audio file: {save_e}")
 
         return False, 0.0
+    finally:
+        # Clean up the successfully processed WAV file if you don't need to keep it
+        # For debugging, you might want to comment this out initially.
+        if saved_success_path and os.path.exists(saved_success_path):
+            try:
+                os.remove(saved_success_path)
+                print(f"{log_prefix} Cleaned up temporary WAV file: {saved_success_path}")
+            except Exception as cleanup_e:
+                print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
+
 
 # --- Remaining App Endpoints ---
 @app.websocket("/ws")
