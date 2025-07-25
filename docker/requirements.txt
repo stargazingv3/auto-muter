@@ -6,4 +6,3 @@ sounddevice
 fastapi
 uvicorn[standard]
 pydub
-speechbrain
