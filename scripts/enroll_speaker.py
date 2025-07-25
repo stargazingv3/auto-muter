@@ -30,12 +30,12 @@ def enroll_speaker_from_path(input_path, output_file):
         return
 
     # --- Model Loading ---
-    print("Loading the speaker embedding model (speechbrain/speaker-recognition-ecapa-tdnn)...")
+    print("Loading the speaker embedding model (speechbrain/spkrec-ecapa-voxceleb)...")
     try:
         # Using a more powerful model for high-quality embeddings.
         # This will download the model on the first run.
         classifier = EncoderClassifier.from_hparams(
-            source="speechbrain/speaker-recognition-ecapa-tdnn",
+            source="speechbrain/spkrec-ecapa-voxceleb",
             savedir=os.path.join("/tmp", "pretrained_models", "ecapa-tdnn") # Caching directory
         )
         print("Model loaded successfully.")
@@ -67,10 +67,22 @@ def enroll_speaker_from_path(input_path, output_file):
         try:
             # Resample to 16kHz, which is required by the model
             waveform = resample_audio(audio_path, target_sr=16000)
-            
+
+            # --- FIX: Ensure minimum audio length ---
+            # The model requires a minimum number of samples to work correctly.
+            # A safe value is 1.5 seconds (1.5 * 16000 = 24000 samples).
+            min_samples = 24000
+            if waveform.shape[1] < min_samples:
+                # Repeat the audio signal until it's long enough
+                repeats = min_samples // waveform.shape[1] + 1
+                waveform = waveform.repeat(1, repeats)
+                # Trim to just over the minimum length
+                waveform = waveform[:, :min_samples]
+                tqdm.write(f"Info: Audio file {os.path.basename(audio_path)} was too short and has been looped to meet minimum length.")
+
             # The model expects a batch dimension, so we add one
             with torch.no_grad():
-                embedding = classifier.encode_batch(waveform.unsqueeze(0))
+                embedding = classifier.encode_batch(waveform)
             
             # Squeeze to remove batch and channel dimensions, leaving just the embedding vector
             all_embeddings.append(embedding.squeeze())
