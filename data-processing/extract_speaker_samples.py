@@ -61,20 +61,19 @@ def _init_worker_models():
             
             # Load VAD model using Pipeline
             # Note: Pipeline.from_pretrained handles downloading all necessary components correctly
-            _vad_pipeline_instance = Pipeline.from_pretrained(
-                "pyannote/voice-activity-detection",
+            _diarization_pipeline_instance = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
                 use_auth_token=HF_TOKEN
             )
             # Ensure the VAD pipeline also uses the specified device
-            _vad_pipeline_instance.to(_device_instance)
+            _diarization_pipeline_instance.to(_device_instance)
 
-
-            print(f"Worker models (embedding, VAD pipeline) loaded successfully on device: {_device_instance}")
+            print(f"Worker models (embedding, diarization pipeline) loaded successfully...")
         except Exception as e:
             print(f"CRITICAL: Worker failed to load pyannote models: {e}")
             traceback.print_exc() # Print full traceback for critical errors
             raise
-    return _embedding_model_instance, _vad_pipeline_instance, _device_instance
+    return _embedding_model_instance, _diarization_pipeline_instance, _device_instance
 
 def get_embedding(audio_input):
     """
@@ -132,13 +131,11 @@ def get_embedding_from_folder(folder_path):
 
 def process_single_raw_audio_file(raw_file_path, master_embedding_np, current_confidence_threshold, round_output_dir, speaker_name):
     """
-    Processes a single raw audio file, performs VAD, extracts speech segments,
-    and saves matching speaker clips.
-    This function is designed to be run in parallel by ProcessPoolExecutor.
+    Processes a single raw audio file using speaker diarization to find and extract a target speaker.
     """
-    global _embedding_model_instance, _vad_pipeline_instance, _device_instance
-    if _embedding_model_instance is None or _vad_pipeline_instance is None:
-        _init_worker_models() # Ensure models are loaded in this process
+    global _embedding_model_instance, _diarization_pipeline_instance, _device_instance
+    if _embedding_model_instance is None or _diarization_pipeline_instance is None:
+        _init_worker_models() # Ensure models are loaded
 
     found_clips_in_file = 0
     master_embedding = torch.from_numpy(master_embedding_np).to(_device_instance).unsqueeze(0)
@@ -146,50 +143,65 @@ def process_single_raw_audio_file(raw_file_path, master_embedding_np, current_co
     try:
         audio = AudioSegment.from_file(raw_file_path).set_channels(1).set_frame_rate(SAMPLE_RATE)
         
-        # 1. Perform Voice Activity Detection using the VAD pipeline
-        speech_annotation: Annotation = _vad_pipeline_instance(raw_file_path)
+        # 1. Perform Speaker Diarization
+        diarization = _diarization_pipeline_instance(raw_file_path)
 
-        # Convert the Annotation to a Timeline, which can then be iterated for coverage
-        # This will merge overlapping or contiguous speech segments.
-        speech_timeline: Timeline = speech_annotation.get_timeline().support()
+        # 2. Group segments by speaker label
+        speaker_segments = {}
+        for segment, _, speaker_label in diarization.itertracks(yield_label=True):
+            if speaker_label not in speaker_segments:
+                speaker_segments[speaker_label] = []
+            speaker_segments[speaker_label].append(segment)
 
-        # 2. Iterate through detected speech segments in the timeline
-        for segment in speech_timeline:
-            start_s = segment.start
-            end_s = segment.end
+        # 3. Iterate through each discovered speaker to find the target
+        for speaker_label, segments in speaker_segments.items():
             
-            # Ensure segment is long enough
-            if (end_s - start_s) < MIN_VAD_SEGMENT_DURATION_S:
+            # Concatenate all segments for this speaker to get a good embedding
+            speaker_audio = AudioSegment.empty()
+            for segment in segments:
+                start_ms = int(segment.start * 1000)
+                end_ms = int(segment.end * 1000)
+                speaker_audio += audio[start_ms:end_ms]
+
+            if len(speaker_audio) < (MIN_VAD_SEGMENT_DURATION_S * 1000):
+                continue # Skip if speaker has very little speech
+
+            # Get embedding for this specific speaker's audio
+            speaker_samples = np.array(speaker_audio.get_array_of_samples())
+            speaker_waveform_np = speaker_samples / (2**((speaker_audio.sample_width * 8) - 1))
+            speaker_embedding_np = get_embedding((speaker_waveform_np, SAMPLE_RATE))
+
+            if speaker_embedding_np is None:
                 continue
 
-            # Extract audio chunk based on VAD segment
-            start_ms = int(start_s * 1000)
-            end_ms = int(end_s * 1000)
-            chunk = audio[start_ms:end_ms]
+            speaker_embedding = torch.from_numpy(speaker_embedding_np).to(_device_instance).unsqueeze(0)
 
-            # Convert pydub AudioSegment to numpy array for embedding
-            chunk_samples = np.array(chunk.get_array_of_samples())
-            chunk_waveform_np = chunk_samples / (2**((chunk.sample_width * 8) - 1)) # Normalize
-            
-            chunk_embedding_np = get_embedding((chunk_waveform_np, SAMPLE_RATE))
+            # Compare this speaker's embedding to the master embedding
+            similarity = torch.nn.functional.cosine_similarity(master_embedding, speaker_embedding).item()
 
-            if chunk_embedding_np is None:
-                continue
-
-            chunk_embedding = torch.from_numpy(chunk_embedding_np).to(_device_instance).unsqueeze(0)
-
-            # Compare embeddings
-            similarity = torch.nn.functional.cosine_similarity(master_embedding, chunk_embedding).item()
-
+            # 4. If it's a match, extract all their individual clips
             if similarity > current_confidence_threshold:
-                found_clips_in_file += 1
-                raw_file_base = os.path.splitext(os.path.basename(raw_file_path))[0]
-                output_filename = f"{speaker_name}_{raw_file_base}_t{start_ms}-{end_ms}_{uuid.uuid4().hex[:4]}.wav"
-                chunk.export(os.path.join(round_output_dir, output_filename), format="wav")
+                tqdm.write(f"Match found for {speaker_name} (local label {speaker_label}) in {os.path.basename(raw_file_path)} with score {similarity:.2f}")
+                
+                for segment in segments:
+                    # Optional: Add a duration check on individual clips
+                    if (segment.end - segment.start) < MIN_VAD_SEGMENT_DURATION_S:
+                        continue
+
+                    start_ms = int(segment.start * 1000)
+                    end_ms = int(segment.end * 1000)
+                    chunk = audio[start_ms:end_ms]
+                    
+                    raw_file_base = os.path.splitext(os.path.basename(raw_file_path))[0]
+                    output_filename = f"{speaker_name}_{raw_file_base}_{speaker_label}_t{start_ms}-{end_ms}.wav"
+                    chunk.export(os.path.join(round_output_dir, output_filename), format="wav")
+                    found_clips_in_file += 1
+                
+                break # Move to next file once target speaker is found and extracted
 
     except Exception as e:
         tqdm.write(f"Warning: Worker failed to process raw file {raw_file_path}. Error: {e}")
-        traceback.print_exc() # Print full traceback for worker errors
+        traceback.print_exc()
         return 0
     
     return found_clips_in_file
