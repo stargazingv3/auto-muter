@@ -43,37 +43,39 @@ _device_instance = None
 
 def _init_worker_models():
     """
-    Initializes the pyannote embedding and VAD models/pipelines in each worker process.
-    Called once per process in the ProcessPoolExecutor.
+    Initializes the pyannote models in each worker process.
+    This function is called once per process by the ProcessPoolExecutor.
+    It sets the global variables for the models.
     """
-    global _embedding_model_instance, _vad_pipeline_instance, _device_instance
-    if _embedding_model_instance is None or _vad_pipeline_instance is None:
-        try:
-            _device_instance = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    global _embedding_model_instance, _diarization_pipeline_instance, _device_instance
+    # This check prevents re-initialization within the same process
+    if _diarization_pipeline_instance is not None:
+        return
 
-            # Load embedding model using Inference
-            _embedding_model_instance = Inference(
-                "pyannote/embedding",
-                window="whole",
-                use_auth_token=HF_TOKEN,
-                device=_device_instance
-            )
-            
-            # Load VAD model using Pipeline
-            # Note: Pipeline.from_pretrained handles downloading all necessary components correctly
-            _diarization_pipeline_instance = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=HF_TOKEN
-            )
-            # Ensure the VAD pipeline also uses the specified device
-            _diarization_pipeline_instance.to(_device_instance)
+    try:
+        print("Initializing models for new worker process...")
+        _device_instance = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            print(f"Worker models (embedding, diarization pipeline) loaded successfully...")
-        except Exception as e:
-            print(f"CRITICAL: Worker failed to load pyannote models: {e}")
-            traceback.print_exc() # Print full traceback for critical errors
-            raise
-    return _embedding_model_instance, _diarization_pipeline_instance, _device_instance
+        _embedding_model_instance = Inference(
+            "pyannote/embedding",
+            window="whole",
+            use_auth_token=HF_TOKEN,
+            device=_device_instance
+        )
+        
+        _diarization_pipeline_instance = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            use_auth_token=HF_TOKEN
+        )
+        _diarization_pipeline_instance.to(_device_instance)
+        
+        print(f"Worker models loaded successfully on device: {_device_instance}")
+
+    except Exception as e:
+        print(f"CRITICAL: A worker failed to initialize its models. Error: {e}")
+        traceback.print_exc()
+        # Raise the exception to make it clear the worker is non-functional
+        raise
 
 def get_embedding(audio_input):
     """
@@ -132,10 +134,10 @@ def get_embedding_from_folder(folder_path):
 def process_single_raw_audio_file(raw_file_path, master_embedding_np, current_confidence_threshold, round_output_dir, speaker_name):
     """
     Processes a single raw audio file using speaker diarization to find and extract a target speaker.
+    This function RELIES on the models being pre-loaded by the worker's initializer.
     """
+    # The global variables are set by the initializer, no need to check/reload them here.
     global _embedding_model_instance, _diarization_pipeline_instance, _device_instance
-    if _embedding_model_instance is None or _diarization_pipeline_instance is None:
-        _init_worker_models() # Ensure models are loaded
 
     found_clips_in_file = 0
     master_embedding = torch.from_numpy(master_embedding_np).to(_device_instance).unsqueeze(0)
@@ -145,6 +147,7 @@ def process_single_raw_audio_file(raw_file_path, master_embedding_np, current_co
         
         # 1. Perform Speaker Diarization
         diarization = _diarization_pipeline_instance(raw_file_path)
+
 
         # 2. Group segments by speaker label
         speaker_segments = {}
