@@ -203,7 +203,6 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
     print(f"--- Starting data extraction pipeline for speaker: {speaker_name} ---")
 
     # The main process still needs to load models for master embedding generation
-    # Call _init_worker_models once in the main process
     _embedding_model_instance, _vad_pipeline_instance, _device_instance = _init_worker_models()
 
     # 2. Define paths
@@ -266,6 +265,33 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
                 except Exception as exc:
                     tqdm.write(f"Generated an exception during file processing: {exc}")
         
+        # --- START: NEW CODE TO DELETE LARGEST CLIPS ---
+        if found_clips_count > 20: # Only run if there are enough clips to delete
+            tqdm.write(f"Pruning outliers: Checking for the 20 largest files to delete...")
+            try:
+                # Get all files and their sizes from the round's output directory
+                round_files = [
+                    (os.path.join(round_output_dir, f), os.path.getsize(os.path.join(round_output_dir, f)))
+                    for f in os.listdir(round_output_dir)
+                    if f.lower().endswith('.wav')
+                ]
+                
+                # Sort files by size, descending
+                round_files.sort(key=lambda x: x[1], reverse=True)
+                
+                # Identify the top 20 largest files
+                files_to_delete = round_files[:20]
+                
+                # Delete them
+                for filepath, size_bytes in files_to_delete:
+                    os.remove(filepath)
+                
+                tqdm.write(f"✅ Successfully deleted the {len(files_to_delete)} largest clips to prevent embedding poisoning.")
+                
+            except Exception as e:
+                tqdm.write(f"Could not perform cleanup of large files: {e}")
+        # --- END: NEW CODE TO DELETE LARGEST CLIPS ---
+        
         print(f"--- Round {round_num} Complete. Found {found_clips_count} new clips. ---")
 
         if found_clips_count == 0:
@@ -301,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-w", "--workers",
         type=int,
-        default=1, # Good default for most systems
+        default=8, # Good default for most systems
         help="The number of worker processes to use for parallel audio processing. Default is 4."
     )
 
