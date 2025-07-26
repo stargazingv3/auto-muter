@@ -2,8 +2,8 @@ import os
 import argparse
 import torch
 import numpy as np
-from pyannote.audio import Inference, Pipeline # Import Pipeline
-from pyannote.core import SlidingWindowFeature, Segment, Timeline
+from pyannote.audio import Inference, Pipeline
+from pyannote.core import Annotation, Timeline, Segment # Import necessary pyannote.core components
 from pydub import AudioSegment
 from tqdm import tqdm
 import shutil
@@ -11,7 +11,7 @@ import tempfile
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
-import traceback # Added for more detailed error reporting in workers
+import traceback
 
 # --- Configuration ---
 HF_TOKEN = os.getenv("HF_AUTH_TOKEN")
@@ -31,12 +31,12 @@ OUTPUT_SPEAKERS_DIR = os.path.join(BASE_DATA_DIR, "speakers")
 # Model-specific settings
 SAMPLE_RATE = 16000
 MIN_VAD_SEGMENT_DURATION_S = 1.0 # Minimum duration for a VAD segment to be considered for embedding
-INITIAL_CONFIDENCE_THRESHOLD = 0.3  # Start with a lower threshold
+INITIAL_CONFIDENCE_THRESHOLD = 0.5  # Start with a lower threshold
 CONFIDENCE_THRESHOLD_INCREMENT = 0.2 # Increase by this much each round
 
 # Global variable for models within multiprocessing context (each process loads its own)
 _embedding_model_instance = None
-_vad_pipeline_instance = None # Changed to _vad_pipeline_instance
+_vad_pipeline_instance = None
 _device_instance = None
 
 # --- Helper Functions ---
@@ -68,13 +68,11 @@ def _init_worker_models():
             # Ensure the VAD pipeline also uses the specified device
             _vad_pipeline_instance.to(_device_instance)
 
-
             print(f"Worker models (embedding, VAD pipeline) loaded successfully on device: {_device_instance}")
         except Exception as e:
             print(f"CRITICAL: Worker failed to load pyannote models: {e}")
             traceback.print_exc() # Print full traceback for critical errors
             raise
-    return _embedding_model_instance, _vad_pipeline_instance, _device_instance
 
 def get_embedding(audio_input):
     """
@@ -98,14 +96,16 @@ def get_embedding(audio_input):
             embedding_output = _embedding_model_instance({'waveform': waveform_tensor.to(_device_instance), 'sample_rate': sample_rate})
         else:
             raise ValueError("Unsupported audio_input type for get_embedding.")
-
-        if isinstance(embedding_output, SlidingWindowFeature):
-            return embedding_output.data.mean(axis=0)
-        return np.asarray(embedding_output)
+        
+        # The output of Inference is a numpy array (1, D)
+        # Squeeze to remove the first dimension if it exists
+        if embedding_output.ndim > 1:
+            return np.squeeze(embedding_output, axis=0)
+        return embedding_output
     except Exception as e:
-        tqdm.write(f"Warning: Could not generate embedding for input type {type(audio_input)}. Error: {e}")
-        # traceback.print_exc() # Uncomment for more detailed error during debugging
+        tqdm.write(f"Warning: Could not generate embedding for input. Error: {e}")
         return None
+
 
 def get_embedding_from_folder(folder_path):
     """Generates a single, averaged embedding from a folder of audio files."""
@@ -197,13 +197,11 @@ def process_single_raw_audio_file(raw_file_path, master_embedding_np, current_co
 # --- Main Extraction Logic ---
 
 def extract_samples(speaker_name, num_rounds=3, max_workers=None):
-    """
-    Performs iterative sample extraction for a given speaker using multiprocessing.
-    """
+    """Performs iterative sample extraction for a given speaker using multiprocessing."""
     print(f"--- Starting data extraction pipeline for speaker: {speaker_name} ---")
 
-    # The main process still needs to load models for master embedding generation
-    _embedding_model_instance, _vad_pipeline_instance, _device_instance = _init_worker_models()
+    # The main process loads models for master embedding generation
+    _init_worker_models()
 
     # 2. Define paths
     initial_sample_path = os.path.join(SPEAKER_SAMPLES_DIR, f"{speaker_name}.mp3")
@@ -239,10 +237,17 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
             return
 
         print("Master embedding generated successfully.")
-
         # c. Scan raw audio files and extract matching chunks using multiprocessing
-        raw_files = [os.path.join(RAW_AUDIO_DIR, f) for f in os.listdir(RAW_AUDIO_DIR) if f.lower().endswith(('.wav', '.mp3', '.flac', '.m4a'))]
+        # --- MODIFIED: Save the calculated embedding for this round ---
+        embedding_save_path = os.path.join(speaker_output_dir, f"run_{round_num}_master_embedding.npy")
+        try:
+            np.save(embedding_save_path, master_embedding_np)
+            print(f"Master embedding for round {round_num} saved to: {embedding_save_path}")
+        except Exception as e:
+            print(f"Warning: Could not save master embedding for round {round_num}. Error: {e}")
+        # --- END MODIFICATION ---
 
+        raw_files = [os.path.join(RAW_AUDIO_DIR, f) for f in os.listdir(RAW_AUDIO_DIR) if f.lower().endswith(('.wav', '.mp3', '.flac', '.m4a'))]
         found_clips_count = 0
         
         with ProcessPoolExecutor(max_workers=max_workers, initializer=_init_worker_models) as executor:
@@ -265,9 +270,10 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
                 except Exception as exc:
                     tqdm.write(f"Generated an exception during file processing: {exc}")
         
-        # --- START: NEW CODE TO DELETE LARGEST CLIPS ---
-        if found_clips_count > 20: # Only run if there are enough clips to delete
-            tqdm.write(f"Pruning outliers: Checking for the 20 largest files to delete...")
+        # --- MODIFIED: Prune 50 largest files after the 1st run ONLY ---
+        # This prevents long, non-speech audio segments from poisoning subsequent embeddings
+        if round_num == 1 and found_clips_count > 50:
+            tqdm.write(f"Pruning outliers after first run: Found {found_clips_count} clips. Checking for the 50 largest files to delete...")
             try:
                 # Get all files and their sizes from the round's output directory
                 round_files = [
@@ -278,11 +284,8 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
                 
                 # Sort files by size, descending
                 round_files.sort(key=lambda x: x[1], reverse=True)
+                files_to_delete = round_files[:50]
                 
-                # Identify the top 20 largest files
-                files_to_delete = round_files[:20]
-                
-                # Delete them
                 for filepath, size_bytes in files_to_delete:
                     os.remove(filepath)
                 
@@ -290,7 +293,7 @@ def extract_samples(speaker_name, num_rounds=3, max_workers=None):
                 
             except Exception as e:
                 tqdm.write(f"Could not perform cleanup of large files: {e}")
-        # --- END: NEW CODE TO DELETE LARGEST CLIPS ---
+        # --- END MODIFICATION ---
         
         print(f"--- Round {round_num} Complete. Found {found_clips_count} new clips. ---")
 
@@ -327,8 +330,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-w", "--workers",
         type=int,
-        default=8, # Good default for most systems
-        help="The number of worker processes to use for parallel audio processing. Default is 4."
+        default=8,
+        help="The number of worker processes to use for parallel audio processing."
     )
 
     args = parser.parse_args()

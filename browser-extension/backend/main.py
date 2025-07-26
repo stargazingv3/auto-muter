@@ -125,7 +125,7 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         print(f"{log_prefix} Similarity for live audio: {similarity_score:.4f}")
 
         # 6. Define a threshold for detection. Reverted to a value suitable for pyannote.
-        THRESHOLD = 0.7 # This may need tuning again
+        THRESHOLD = 0.3 # This may need tuning again
 
         is_target = similarity_score > THRESHOLD
         print(f"{log_prefix} Similarity: {similarity_score:.4f}, Is Target: {is_target}")
