@@ -1,5 +1,6 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Body
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import torch
 import numpy as np
 from pyannote.audio import Inference
@@ -9,6 +10,8 @@ import os
 from pydub import AudioSegment
 from datetime import datetime
 import uuid
+import subprocess
+import json
 
 # --- Configuration for saving audio ---
 SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps"
@@ -25,6 +28,15 @@ if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
 
 app = FastAPI()
+
+# Add CORS middleware to allow requests from the extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # --- BACK TO PYANNOTE: Model Setup ---
 inference_model = None
@@ -75,6 +87,46 @@ def load_model_and_embedding():
 @app.on_event("startup")
 async def startup_event():
     load_model_and_embedding()
+
+@app.post("/enroll")
+async def enroll_speaker(payload: dict = Body(...)):
+    speaker_name = payload.get("name")
+    youtube_url = payload.get("url")
+
+    if not speaker_name or not youtube_url:
+        return {"status": "error", "message": "Missing speaker name or YouTube URL."}
+
+    try:
+        # Define the output path for the downloaded audio
+        output_path = f"/app/browser-extension/backend/tmp/{speaker_name}.wav"
+        
+        # Use yt-dlp to download and extract audio
+        command = [
+            "yt-dlp",
+            "-x", "--audio-format", "wav",
+            "-o", output_path,
+            youtube_url
+        ]
+        subprocess.run(command, check=True)
+
+        # Enroll the speaker using the downloaded audio
+        enroll_command = [
+            "python3",
+            "/app/scripts/enroll_speaker.py",
+            "--name", speaker_name,
+            "--file", output_path
+        ]
+        subprocess.run(enroll_command, check=True)
+
+        # Reload the embeddings after enrollment
+        load_model_and_embedding()
+
+        return {"status": "success", "message": f"Speaker {speaker_name} enrolled successfully."}
+
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "message": f"An error occurred during enrollment: {e}"}
+    except Exception as e:
+        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
 # --- REVERTED is_target_speaker function ---
 def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
@@ -170,3 +222,4 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/")
 async def get():
     return HTMLResponse("<h1>FastAPI Pyannote Backend</h1><p>WebSocket endpoint is /ws</p>")
+
