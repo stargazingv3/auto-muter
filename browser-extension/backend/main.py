@@ -282,6 +282,56 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
                 print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
 
 # --- Remaining App Endpoints ---
+@app.post("/wipe-db")
+async def wipe_db():
+    """
+    Wipes the entire speaker database and reinitializes it.
+    """
+    global speaker_embeddings
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
+
+    try:
+        # 1. Clear in-memory embeddings
+        speaker_embeddings.clear()
+        print("In-memory speaker embeddings cleared.")
+
+        # 2. Delete all .npy files
+        if os.path.exists(SPEAKERS_DIR):
+            for npy_file in os.listdir(SPEAKERS_DIR):
+                if npy_file.endswith(".npy"):
+                    os.remove(os.path.join(SPEAKERS_DIR, npy_file))
+            print("All .npy embedding files have been deleted.")
+
+        # 3. Delete the database file
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+            print(f"Database file at {DB_PATH} has been deleted.")
+
+        # 4. Re-initialize the database by running the script
+        print("Re-initializing the database...")
+        init_script_path = "/app/scripts/initialize_database.py"
+        result = subprocess.run(
+            ["python3", init_script_path],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print("Database re-initialization script output:", result.stdout)
+        
+        # 5. Reload the (now empty) embeddings
+        load_model_and_embeddings()
+
+        return {"status": "success", "message": "Database wiped and reinitialized successfully."}
+    except FileNotFoundError:
+        return {"status": "error", "message": "Database file not found, could not delete."}
+    except subprocess.CalledProcessError as e:
+        print(f"Error re-initializing database: {e.stderr}")
+        return {"status": "error", "message": f"Failed to re-initialize database: {e.stderr}"}
+    except Exception as e:
+        print(f"An unexpected error occurred during DB wipe: {e}")
+        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

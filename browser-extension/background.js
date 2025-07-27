@@ -55,12 +55,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.type === 'ENROLL_SPEAKER') {
       console.log("Background: Received ENROLL_SPEAKER request.");
       enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
+    } else if (request.type === 'WIPE_DB') {
+      console.log("Background: Received WIPE_DB request.");
+      wipeDatabase();
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function wipeDatabase() {
+  try {
+    const response = await fetch('http://localhost:8000/wipe-db', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    const data = await response.json();
+    console.log('Wipe DB response:', data);
+    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: data.status, message: data.message });
+  } catch (error) {
+    console.error('Error wiping database:', error);
+    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: 'error', message: error.toString() });
+  }
+}
 
 async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
   try {
