@@ -54,7 +54,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     } else if (request.type === 'ENROLL_SPEAKER') {
       console.log("Background: Received ENROLL_SPEAKER request.");
-      enrollSpeaker(request.speakerName, request.youtubeUrl);
+      enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
     }
   })();
 
@@ -62,7 +62,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-async function enrollSpeaker(speakerName, youtubeUrl) {
+async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
   try {
     const response = await fetch('http://localhost:8000/enroll', {
       method: 'POST',
@@ -72,6 +72,8 @@ async function enrollSpeaker(speakerName, youtubeUrl) {
       body: JSON.stringify({
         name: speakerName,
         url: youtubeUrl,
+        start: startTime,
+        end: endTime,
       }),
     });
     const data = await response.json();

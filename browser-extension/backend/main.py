@@ -98,6 +98,8 @@ async def startup_event():
 async def enroll_speaker(payload: dict = Body(...)):
     speaker_name = payload.get("name")
     youtube_url = payload.get("url")
+    start_time = payload.get("start")
+    end_time = payload.get("end")
 
     if not speaker_name or not youtube_url:
         return {"status": "error", "message": "Missing speaker name or YouTube URL."}
@@ -117,8 +119,15 @@ async def enroll_speaker(payload: dict = Body(...)):
             "yt-dlp",
             "-x", "--audio-format", "wav",
             "-o", downloaded_audio_path,
-            youtube_url
         ]
+
+        # If timestamps are provided, add post-processing arguments for ffmpeg
+        if start_time and end_time:
+            postprocessor_args = f"ffmpeg:-ss {start_time} -to {end_time}"
+            command.extend(["--postprocessor-args", postprocessor_args])
+
+        command.append(youtube_url)
+        
         subprocess.run(command, check=True, capture_output=True, text=True)
         print("Download complete.")
 
