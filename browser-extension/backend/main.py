@@ -181,8 +181,12 @@ async def enroll_speaker(payload: dict = Body(...)):
         if timestamp:
             enroll_command.extend(["--timestamp", timestamp])
         
-        subprocess.run(enroll_command, check=True, capture_output=True, text=True)
+        # Capture stderr for better error reporting
+        result = subprocess.run(enroll_command, check=True, capture_output=True, text=True)
         print("Enrollment script finished.")
+        print("Enrollment script stdout:", result.stdout)
+        print("Enrollment script stderr:", result.stderr)
+
 
         # Reload embeddings to include the new one
         load_model_and_embeddings()
@@ -273,7 +277,7 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         # Clean up the temporary WAV file
         if saved_success_path and os.path.exists(saved_success_path):
             try:
-                os..remove(saved_success_path)
+                os.remove(saved_success_path)
             except Exception as cleanup_e:
                 print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
 
@@ -300,4 +304,3 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/")
 async def get():
     return HTMLResponse("<h1>FastAPI Pyannote Backend</h1><p>WebSocket endpoint is /ws</p>")
-
