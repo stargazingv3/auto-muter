@@ -14,7 +14,7 @@ WORKDIR /app
 
 # Copy requirements and install Python packages
 COPY docker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 RUN mkdir -p /.cache && chmod 777 /.cache
 RUN mkdir -p /.local && chmod 777 /.local

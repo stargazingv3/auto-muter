@@ -1,179 +1,251 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Body
 from fastapi.responses import HTMLResponse
-import random
+from fastapi.middleware.cors import CORSMiddleware
 import torch
+import numpy as np
 from pyannote.audio import Inference
+from pyannote.core import SlidingWindowFeature
 import io
 import os
 from pydub import AudioSegment
 from datetime import datetime
 import uuid
-import shutil # Import shutil for file copying
-from pyannote.core import SlidingWindowFeature # Import SlidingWindowFeature
+import subprocess
+import json
 
-# --- Configuration for saving error audio ---
-SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps" # Adjust this path as needed
-# For Docker, ensure this path is either a volume mount or created in Dockerfile
-# Create the directory if it doesn't exist
+# --- Configuration for saving audio ---
+SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps"
 os.makedirs(SAVE_ERROR_AUDIO_DIR, exist_ok=True)
-print(f"ERROR AUDIO DUMP DIRECTORY: {SAVE_ERROR_AUDIO_DIR}") # Confirm path at startup
+print(f"ERROR AUDIO DUMP DIRECTORY: {SAVE_ERROR_AUDIO_DIR}")
 
-# --- Configuration for saving successful audio ---
-SAVE_SUCCESS_AUDIO_DIR = "/app/success_audio_dumps" # New directory for successful decodes
+SAVE_SUCCESS_AUDIO_DIR = "/app/success_audio_dumps"
 os.makedirs(SAVE_SUCCESS_AUDIO_DIR, exist_ok=True)
-print(f"SUCCESS AUDIO DUMP DIRECTORY: {SAVE_SUCCESS_AUDIO_DIR}") # Confirm path at startup
+print(f"SUCCESS AUDIO DUMP DIRECTORY: {SAVE_SUCCESS_AUDIO_DIR}")
 
-
-# --- Existing App Setup ---
+# --- App and Model Setup ---
 HF_TOKEN = os.getenv("HF_AUTH_TOKEN")
 if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
 
 app = FastAPI()
 
-# MODIFIED: Add window="whole" to Inference
-inference_model = Inference("pyannote/embedding", device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), use_auth_token=HF_TOKEN, window="whole")
+# Add CORS middleware to allow requests from the extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
-TARGET_SPEAKER_MP3 = "/app/browser-extension/backend/target_speaker.mp3"
-target_speaker_embedding = None
+# --- BACK TO PYANNOTE: Model Setup ---
+inference_model = None
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-async def load_target_speaker_embedding():
-    global target_speaker_embedding
-    if not os.path.exists(TARGET_SPEAKER_MP3):
-        print(f"Error: Target speaker MP3 not found at {TARGET_SPEAKER_MP3}")
-        target_speaker_embedding = None
-        return
+SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
+# This will hold all loaded speaker embeddings, keyed by speaker name
+speaker_embeddings = {}
 
+def load_model_and_embedding():
+    """Loads the pyannote model and all enrolled speaker embeddings."""
+    global inference_model, speaker_embeddings
+    
+    # Load the pyannote model
+    print("Loading the speaker embedding model (pyannote/embedding)...")
     try:
-        print(f"Attempting to load target speaker embedding from {TARGET_SPEAKER_MP3}...")
-        embedding_output = inference_model(TARGET_SPEAKER_MP3)
-        # Handle different output types from inference_model
-        if isinstance(embedding_output, SlidingWindowFeature):
-            target_speaker_embedding = torch.from_numpy(embedding_output.data).mean(axis=0, keepdim=True).to(inference_model.device)
-        elif isinstance(embedding_output, torch.Tensor):
-            target_speaker_embedding = embedding_output.to(inference_model.device)
-        else: # Handle case if it's a numpy array directly
-            target_speaker_embedding = torch.from_numpy(embedding_output).to(inference_model.device)
-
-        # Ensure the embedding is 2D (batch_size, embedding_dim)
-        if target_speaker_embedding.dim() == 1:
-            target_speaker_embedding = target_speaker_embedding.unsqueeze(0)
-
-        print("Target speaker embedding loaded successfully.")
+        inference_model = Inference(
+            "pyannote/embedding", 
+            window="whole", 
+            use_auth_token=HF_TOKEN,
+            device=device
+        )
+        print("Pyannote model loaded successfully.")
     except Exception as e:
-        print(f"Error loading target speaker embedding: {e}")
-        target_speaker_embedding = None
+        print(f"CRITICAL: Failed to load pyannote model: {e}")
+        raise
+
+    # Load all pre-computed speaker embeddings
+    speaker_embeddings.clear()
+    os.makedirs(SPEAKERS_DIR, exist_ok=True)
+    print(f"Loading speaker embeddings from: {SPEAKERS_DIR}")
+    
+    for npy_file in os.listdir(SPEAKERS_DIR):
+        if npy_file.endswith(".npy"):
+            speaker_name = os.path.splitext(npy_file)[0]
+            file_path = os.path.join(SPEAKERS_DIR, npy_file)
+            try:
+                embedding_npy = np.load(file_path)
+                embedding_tensor = torch.from_numpy(embedding_npy).to(device)
+                
+                if embedding_tensor.dim() == 1:
+                    embedding_tensor = embedding_tensor.unsqueeze(0)
+                
+                speaker_embeddings[speaker_name] = embedding_tensor
+                print(f"- Loaded embedding for speaker: {speaker_name}")
+            except Exception as e:
+                print(f"Error loading embedding for {speaker_name} from {file_path}: {e}")
+    
+    if not speaker_embeddings:
+        print("No speaker embeddings found.")
+    else:
+        print(f"Successfully loaded {len(speaker_embeddings)} speaker(s).")
 
 @app.on_event("startup")
 async def startup_event():
-    await load_target_speaker_embedding()
+    load_model_and_embedding()
 
-# --- MODIFIED is_target_speaker function ---
+@app.post("/enroll")
+async def enroll_speaker(payload: dict = Body(...)):
+    speaker_name = payload.get("name")
+    youtube_url = payload.get("url")
+    start_time = payload.get("start")
+    end_time = payload.get("end")
+
+    if not speaker_name or not youtube_url:
+        return {"status": "error", "message": "Missing speaker name or YouTube URL."}
+
+    # Create a temporary directory for the download if it doesn't exist
+    temp_dir = "/app/browser-extension/backend/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Define the output path for the downloaded audio
+    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}.wav")
+    embedding_output_path = os.path.join(SPEAKERS_DIR, f"{speaker_name}.npy")
+
+    try:
+        # Use yt-dlp to download and extract audio
+        print(f"Downloading audio from {youtube_url} for speaker {speaker_name}...")
+        command = [
+            "yt-dlp",
+            "-x", "--audio-format", "wav",
+            "-o", downloaded_audio_path,
+        ]
+
+        # If timestamps are provided, use --download-sections for efficiency
+        if start_time and end_time:
+            # The format is "*start_time-end_time"
+            command.extend(["--download-sections", f"*{start_time}-{end_time}"])
+        
+        # Force --force-keyframes-at-cuts to make the trimming more accurate
+        command.append("--force-keyframes-at-cuts")
+
+        command.append(youtube_url)
+        
+        # Use Popen to stream output in real-time (optional but good for debugging)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in iter(process.stdout.readline, ''):
+            print(line, end='')
+        process.wait()
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, command)
+
+        print("Download complete.")
+
+        # Enroll the speaker using the downloaded audio
+        print(f"Enrolling speaker {speaker_name} from {downloaded_audio_path}...")
+        enroll_command = [
+            "python3",
+            "/app/scripts/enroll_speaker.py",
+            "-i", downloaded_audio_path,
+            "-o", embedding_output_path
+        ]
+        subprocess.run(enroll_command, check=True, capture_output=True, text=True)
+        print("Enrollment complete.")
+
+        # Reload the embeddings after enrollment
+        load_model_and_embedding()
+
+        return {"status": "success", "message": f"Speaker {speaker_name} enrolled successfully."}
+
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred during enrollment subprocess: {e}")
+        # If the command was run with capture_output=True, stderr will be in e.stderr
+        error_output = e.stderr if e.stderr else "No stderr captured. Check logs."
+        return {"status": "error", "message": f"An error occurred during enrollment: {error_output}"}
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+    finally:
+        # Clean up the temporary downloaded audio file
+        if os.path.exists(downloaded_audio_path):
+            os.remove(downloaded_audio_path)
+
+# --- REVERTED is_target_speaker function ---
 def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
     """
-    Uses the ML model to detect the target speaker after converting
-    the incoming audio data (e.g., WebM) to WAV format in memory.
-    Saves the incoming raw audio data if decoding or processing fails.
-    Also saves successfully decoded and processed WAV audio.
+    Uses the pyannote model to detect any of the target speakers from incoming audio.
     """
-    if target_speaker_embedding is None:
-        print("Target speaker embedding not loaded. Cannot perform detection.")
+    if not speaker_embeddings or inference_model is None:
+        if not speaker_embeddings:
+            print("No speaker embeddings loaded. Cannot perform detection.")
+        if inference_model is None:
+            print("Model not loaded. Cannot perform detection.")
         return False, 0.0
 
-    # Generate a unique ID for this audio chunk for logging and saving
     unique_id = str(uuid.uuid4())[:8]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_prefix = f"[{timestamp}-{unique_id}]"
-
-    saved_success_path = None # Initialize to None
+    saved_success_path = None
+    max_similarity_score = 0.0
 
     try:
-        print(f"{log_prefix} Received {len(audio_data)} bytes for processing.")
-
-        # --- Attempt pydub conversion from raw bytes ---
-        # Assuming the incoming audio_data is WebM (opus) from MediaRecorder.
+        # 1. Convert incoming WebM audio to a processable format
         audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="webm")
-        print(f"{log_prefix} pydub conversion successful. Length: {audio_segment.duration_seconds:.2f}s")
-
-        # 2. Resample and set channels if necessary for pyannote.audio
-        # pyannote/embedding model typically expects 16kHz mono audio.
+        
+        # 2. Resample to 16kHz mono audio
         if audio_segment.frame_rate != 16000 or audio_segment.channels != 1:
-            print(f"{log_prefix} Resampling audio from {audio_segment.frame_rate}Hz, {audio_segment.channels} channels to 16000Hz, 1 channel.")
             audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
 
-        # 3. Export to WAV format directly to a file
-        saved_success_filename = f"success_decode_processed_audio_{timestamp}_{unique_id}.wav"
+        # 3. Export to a temporary WAV file for processing
+        saved_success_filename = f"live_audio_{timestamp}_{unique_id}.wav"
         saved_success_path = os.path.join(SAVE_SUCCESS_AUDIO_DIR, saved_success_filename)
         audio_segment.export(saved_success_path, format="wav")
-        print(f"{log_prefix} Audio exported to WAV file: {saved_success_path}")
 
-
-        # 4. Compute embedding for the live audio chunk using the SAVED WAV file
+        # 4. Compute embedding for the live audio chunk
         live_audio_embedding_output = inference_model(saved_success_path)
-        print(f"{log_prefix} Embedding computed for live audio from saved file.")
 
-        # --- FIX START: Handle possible SlidingWindowFeature output and ensure tensor dimensions ---
         if isinstance(live_audio_embedding_output, SlidingWindowFeature):
-            live_audio_embedding = torch.from_numpy(live_audio_embedding_output.data).mean(axis=0, keepdim=True).to(inference_model.device)
-            print(f"{log_prefix} Converted SlidingWindowFeature to Tensor. Shape: {live_audio_embedding.shape}")
-        elif isinstance(live_audio_embedding_output, torch.Tensor):
-            live_audio_embedding = live_audio_embedding_output.to(inference_model.device)
+            live_embedding_np = live_audio_embedding_output.data.mean(axis=0)
         else:
-            live_audio_embedding = torch.from_numpy(live_audio_embedding_output).to(inference_model.device)
-            print(f"{log_prefix} Converted numpy array to Tensor. Shape: {live_audio_embedding.shape}")
+            live_embedding_np = np.asarray(live_audio_embedding_output)
 
-        # Ensure both embeddings have the same number of dimensions (e.g., [1, D])
+        live_audio_embedding = torch.from_numpy(live_embedding_np).to(device)
+        
         if live_audio_embedding.dim() == 1:
             live_audio_embedding = live_audio_embedding.unsqueeze(0)
-        # target_speaker_embedding should already be unsqueezed from load_target_speaker_embedding
-        # but a defensive check here doesn't hurt, though it might indicate an issue there if it triggers.
-        if target_speaker_embedding.dim() == 1:
-            target_speaker_embedding_for_comparison = target_speaker_embedding.unsqueeze(0)
-        else:
-            target_speaker_embedding_for_comparison = target_speaker_embedding
-        # --- FIX END ---
-
-        # 5. Compare embeddings using cosine similarity
-        similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, target_speaker_embedding_for_comparison)
         
-        # Log the similarity item here, after it's calculated
-        print(f"{log_prefix} Similarity for live audio: {similarity.item():.4f}")
+        # 5. Compare live embedding against all enrolled speakers
+        for speaker_name, enrolled_embedding in speaker_embeddings.items():
+            similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, enrolled_embedding)
+            similarity_score = similarity.item()
+            
+            if similarity_score > max_similarity_score:
+                max_similarity_score = similarity_score
 
-        # 6. Define a threshold for detection. This will likely need tuning.
-        THRESHOLD = 0.1 # Tunable: lower if missing target, higher if too many false positives
+            # 6. Check against threshold
+            THRESHOLD = 0.4 # This may need tuning
+            if similarity_score > THRESHOLD:
+                print(f"{log_prefix} MATCH: Detected speaker {speaker_name} with similarity: {similarity_score:.4f}")
+                return True, similarity_score
 
-        is_target = similarity.item() > THRESHOLD
-        print(f"{log_prefix} Similarity: {similarity.item():.4f}, Is Target: {is_target}")
-        return is_target, similarity.item()
+        print(f"{log_prefix} NO MATCH: Max similarity was {max_similarity_score:.4f}")
+        return False, max_similarity_score
 
     except Exception as e:
-        print(f"ERROR {log_prefix}: Speaker detection failed (pydub conversion or inference): {e}")
-        print(f"ERROR {log_prefix}: Saving the problematic raw audio data for investigation.")
-
-        try:
-            # Construct a descriptive filename for the error dump
-            saved_error_filename = f"failed_decode_raw_audio_{timestamp}_{unique_id}.webm" # Assume webm, adjust if needed
-            saved_error_path = os.path.join(SAVE_ERROR_AUDIO_DIR, saved_error_filename)
-
-            # Save the raw bytes directly
-            with open(saved_error_path, "wb") as f:
-                f.write(audio_data)
-            print(f"ERROR {log_prefix}: Problematic raw audio data saved to: {saved_error_path}")
-
-        except Exception as save_e:
-            print(f"CRITICAL ERROR {log_prefix}: Failed to save problematic audio file: {save_e}")
-
+        print(f"ERROR {log_prefix}: Speaker detection failed: {e}")
+        error_filename = f"failed_raw_audio_{timestamp}_{unique_id}.webm"
+        error_path = os.path.join(SAVE_ERROR_AUDIO_DIR, error_filename)
+        with open(error_path, "wb") as f:
+            f.write(audio_data)
+        print(f"ERROR {log_prefix}: Problematic raw audio saved to: {error_path}")
         return False, 0.0
     finally:
-        # Clean up the successfully processed WAV file if you don't need to keep it
-        # For debugging, you might want to comment this out initially.
+        # Clean up the temporary WAV file
         if saved_success_path and os.path.exists(saved_success_path):
             try:
                 os.remove(saved_success_path)
-                print(f"{log_prefix} Cleaned up temporary WAV file: {saved_success_path}")
             except Exception as cleanup_e:
                 print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
-
 
 # --- Remaining App Endpoints ---
 @app.websocket("/ws")
@@ -186,7 +258,7 @@ async def websocket_endpoint(websocket: WebSocket):
             is_target, similarity_score = is_target_speaker(data)
             response_data = {
                 "action": "MUTE" if is_target else "UNMUTE",
-                "similarity": round(similarity_score, 4), # Round for cleaner output
+                "similarity": round(similarity_score, 4),
                 "isTargetSpeaker": is_target
             }
             await websocket.send_json(response_data)
@@ -198,3 +270,4 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/")
 async def get():
     return HTMLResponse("<h1>FastAPI Pyannote Backend</h1><p>WebSocket endpoint is /ws</p>")
+
