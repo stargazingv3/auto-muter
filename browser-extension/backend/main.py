@@ -42,12 +42,13 @@ app.add_middleware(
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-ENROLLED_SPEAKER_NPY = "/app/browser-extension/backend/enrolled_speaker.npy"
-target_speaker_embedding = None
+SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
+# This will hold all loaded speaker embeddings, keyed by speaker name
+speaker_embeddings = {}
 
 def load_model_and_embedding():
-    """Loads the pyannote model and the enrolled speaker embedding."""
-    global inference_model, target_speaker_embedding
+    """Loads the pyannote model and all enrolled speaker embeddings."""
+    global inference_model, speaker_embeddings
     
     # Load the pyannote model
     print("Loading the speaker embedding model (pyannote/embedding)...")
@@ -63,26 +64,31 @@ def load_model_and_embedding():
         print(f"CRITICAL: Failed to load pyannote model: {e}")
         raise
 
-    # Load the pre-computed speaker embedding
-    if not os.path.exists(ENROLLED_SPEAKER_NPY):
-        print(f"Error: Enrolled speaker embedding not found at {ENROLLED_SPEAKER_NPY}")
-        print("Please run the enrollment script first.")
-        target_speaker_embedding = None
-        return
-
-    try:
-        print(f"Attempting to load enrolled speaker embedding from {ENROLLED_SPEAKER_NPY}...")
-        embedding_npy = np.load(ENROLLED_SPEAKER_NPY)
-        target_speaker_embedding = torch.from_numpy(embedding_npy).to(device)
-        
-        # Ensure the embedding is 2D [1, D] for cosine similarity
-        if target_speaker_embedding.dim() == 1:
-            target_speaker_embedding = target_speaker_embedding.unsqueeze(0)
-            
-        print("Enrolled speaker embedding loaded successfully.")
-    except Exception as e:
-        print(f"Error loading enrolled speaker embedding: {e}")
-        target_speaker_embedding = None
+    # Load all pre-computed speaker embeddings
+    speaker_embeddings.clear()
+    os.makedirs(SPEAKERS_DIR, exist_ok=True)
+    print(f"Loading speaker embeddings from: {SPEAKERS_DIR}")
+    
+    for npy_file in os.listdir(SPEAKERS_DIR):
+        if npy_file.endswith(".npy"):
+            speaker_name = os.path.splitext(npy_file)[0]
+            file_path = os.path.join(SPEAKERS_DIR, npy_file)
+            try:
+                embedding_npy = np.load(file_path)
+                embedding_tensor = torch.from_numpy(embedding_npy).to(device)
+                
+                if embedding_tensor.dim() == 1:
+                    embedding_tensor = embedding_tensor.unsqueeze(0)
+                
+                speaker_embeddings[speaker_name] = embedding_tensor
+                print(f"- Loaded embedding for speaker: {speaker_name}")
+            except Exception as e:
+                print(f"Error loading embedding for {speaker_name} from {file_path}: {e}")
+    
+    if not speaker_embeddings:
+        print("No speaker embeddings found.")
+    else:
+        print(f"Successfully loaded {len(speaker_embeddings)} speaker(s).")
 
 @app.on_event("startup")
 async def startup_event():
@@ -96,27 +102,36 @@ async def enroll_speaker(payload: dict = Body(...)):
     if not speaker_name or not youtube_url:
         return {"status": "error", "message": "Missing speaker name or YouTube URL."}
 
+    # Create a temporary directory for the download if it doesn't exist
+    temp_dir = "/app/browser-extension/backend/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Define the output path for the downloaded audio
+    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}.wav")
+    embedding_output_path = os.path.join(SPEAKERS_DIR, f"{speaker_name}.npy")
+
     try:
-        # Define the output path for the downloaded audio
-        output_path = f"/app/browser-extension/backend/tmp/{speaker_name}.wav"
-        
         # Use yt-dlp to download and extract audio
+        print(f"Downloading audio from {youtube_url} for speaker {speaker_name}...")
         command = [
             "yt-dlp",
             "-x", "--audio-format", "wav",
-            "-o", output_path,
+            "-o", downloaded_audio_path,
             youtube_url
         ]
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        print("Download complete.")
 
         # Enroll the speaker using the downloaded audio
+        print(f"Enrolling speaker {speaker_name} from {downloaded_audio_path}...")
         enroll_command = [
             "python3",
             "/app/scripts/enroll_speaker.py",
-            "--name", speaker_name,
-            "--file", output_path
+            "-i", downloaded_audio_path,
+            "-o", embedding_output_path
         ]
-        subprocess.run(enroll_command, check=True)
+        subprocess.run(enroll_command, check=True, capture_output=True, text=True)
+        print("Enrollment complete.")
 
         # Reload the embeddings after enrollment
         load_model_and_embedding()
@@ -124,40 +139,49 @@ async def enroll_speaker(payload: dict = Body(...)):
         return {"status": "success", "message": f"Speaker {speaker_name} enrolled successfully."}
 
     except subprocess.CalledProcessError as e:
-        return {"status": "error", "message": f"An error occurred during enrollment: {e}"}
+        print(f"An error occurred during enrollment subprocess: {e}")
+        print(f"Stderr: {e.stderr}")
+        return {"status": "error", "message": f"An error occurred during enrollment: {e.stderr}"}
     except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+    finally:
+        # Clean up the temporary downloaded audio file
+        if os.path.exists(downloaded_audio_path):
+            os.remove(downloaded_audio_path)
 
 # --- REVERTED is_target_speaker function ---
 def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
     """
-    Uses the pyannote model to detect the target speaker from incoming audio.
+    Uses the pyannote model to detect any of the target speakers from incoming audio.
     """
-    if target_speaker_embedding is None or inference_model is None:
-        print("Target speaker embedding or model not loaded. Cannot perform detection.")
+    if not speaker_embeddings or inference_model is None:
+        if not speaker_embeddings:
+            print("No speaker embeddings loaded. Cannot perform detection.")
+        if inference_model is None:
+            print("Model not loaded. Cannot perform detection.")
         return False, 0.0
 
     unique_id = str(uuid.uuid4())[:8]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_prefix = f"[{timestamp}-{unique_id}]"
     saved_success_path = None
+    max_similarity_score = 0.0
 
     try:
-        print(f"{log_prefix} Received {len(audio_data)} bytes for processing.")
-
         # 1. Convert incoming WebM audio to a processable format
         audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="webm")
         
-        # 2. Resample to 16kHz mono audio, as required by the pyannote model
+        # 2. Resample to 16kHz mono audio
         if audio_segment.frame_rate != 16000 or audio_segment.channels != 1:
             audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
 
-        # 3. Export to a temporary WAV file
+        # 3. Export to a temporary WAV file for processing
         saved_success_filename = f"live_audio_{timestamp}_{unique_id}.wav"
         saved_success_path = os.path.join(SAVE_SUCCESS_AUDIO_DIR, saved_success_filename)
         audio_segment.export(saved_success_path, format="wav")
 
-        # 4. Compute embedding for the live audio chunk using pyannote
+        # 4. Compute embedding for the live audio chunk
         live_audio_embedding_output = inference_model(saved_success_path)
 
         if isinstance(live_audio_embedding_output, SlidingWindowFeature):
@@ -170,18 +194,22 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         if live_audio_embedding.dim() == 1:
             live_audio_embedding = live_audio_embedding.unsqueeze(0)
         
-        # 5. Compare embeddings using cosine similarity
-        similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, target_speaker_embedding)
-        similarity_score = similarity.item()
-        
-        print(f"{log_prefix} Similarity for live audio: {similarity_score:.4f}")
+        # 5. Compare live embedding against all enrolled speakers
+        for speaker_name, enrolled_embedding in speaker_embeddings.items():
+            similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, enrolled_embedding)
+            similarity_score = similarity.item()
+            
+            if similarity_score > max_similarity_score:
+                max_similarity_score = similarity_score
 
-        # 6. Define a threshold for detection. Reverted to a value suitable for pyannote.
-        THRESHOLD = 0.3 # This may need tuning again
+            # 6. Check against threshold
+            THRESHOLD = 0.4 # This may need tuning
+            if similarity_score > THRESHOLD:
+                print(f"{log_prefix} MATCH: Detected speaker {speaker_name} with similarity: {similarity_score:.4f}")
+                return True, similarity_score
 
-        is_target = similarity_score > THRESHOLD
-        print(f"{log_prefix} Similarity: {similarity_score:.4f}, Is Target: {is_target}")
-        return is_target, similarity_score
+        print(f"{log_prefix} NO MATCH: Max similarity was {max_similarity_score:.4f}")
+        return False, max_similarity_score
 
     except Exception as e:
         print(f"ERROR {log_prefix}: Speaker detection failed: {e}")
