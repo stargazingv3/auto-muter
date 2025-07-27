@@ -76,8 +76,10 @@ async function enrollSpeaker(speakerName, youtubeUrl) {
     });
     const data = await response.json();
     console.log('Enrollment response:', data);
+    chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: data.status, message: data.message });
   } catch (error) {
     console.error('Error enrolling speaker:', error);
+    chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: 'error', message: error.toString() });
   }
 }
 
