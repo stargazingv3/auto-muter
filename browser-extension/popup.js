@@ -36,3 +36,39 @@ testMuteButton.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'TEST_MUTE' });
   window.close();
 });
+
+// Listener for the enroll form
+const enrollForm = document.getElementById('enrollForm');
+const enrollStatus = document.getElementById('enrollStatus');
+
+enrollForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const speakerName = document.getElementById('speakerName').value;
+  const youtubeUrl = document.getElementById('youtubeUrl').value;
+  const startTime = document.getElementById('startTime').value;
+  const endTime = document.getElementById('endTime').value;
+  
+  enrollStatus.textContent = 'Enrolling...';
+  enrollStatus.style.color = 'black';
+
+  chrome.runtime.sendMessage({ 
+    type: 'ENROLL_SPEAKER', 
+    speakerName, 
+    youtubeUrl,
+    startTime,
+    endTime
+  });
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === 'ENROLLMENT_STATUS') {
+    if (request.status === 'success') {
+      enrollStatus.textContent = request.message;
+      enrollStatus.style.color = 'green';
+      enrollForm.reset();
+    } else {
+      enrollStatus.textContent = `Error: ${request.message}`;
+      enrollStatus.style.color = 'red';
+    }
+  }
+});

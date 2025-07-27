@@ -11,6 +11,16 @@
   <button id="startStopButton">Start</button>
   <hr>
   <button id="testMuteButton">Test Mute</button>
+  <hr>
+  <h2>Enroll New Speaker</h2>
+  <form id="enrollForm">
+    <input type="text" id="speakerName" placeholder="Speaker Name" required>
+    <input type="url" id="youtubeUrl" placeholder="YouTube URL" required>
+    <input type="text" id="startTime" placeholder="Start (e.g., 01:23)">
+    <input type="text" id="endTime" placeholder="End (e.g., 02:45)">
+    <button type="submit">Enroll</button>
+  </form>
+  <p id="enrollStatus"></p>
   <script src="popup.js"></script>
 </body>
 </html>
