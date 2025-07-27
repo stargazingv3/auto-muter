@@ -64,7 +64,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function enrollSpeaker(speakerName, youtubeUrl) {
   try {
-    const response = await fetch('http://localhost:5000/enroll', {
+    const response = await fetch('http://localhost:8000/enroll', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
