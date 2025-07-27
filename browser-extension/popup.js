@@ -36,3 +36,13 @@ testMuteButton.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'TEST_MUTE' });
   window.close();
 });
+
+// Listener for the enroll form
+const enrollForm = document.getElementById('enrollForm');
+enrollForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const speakerName = document.getElementById('speakerName').value;
+  const youtubeUrl = document.getElementById('youtubeUrl').value;
+  chrome.runtime.sendMessage({ type: 'ENROLL_SPEAKER', speakerName, youtubeUrl });
+  window.close();
+});

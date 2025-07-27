@@ -52,12 +52,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } catch (error) {
         console.error(`Background (Test): Error during test mute: ${error}`);
       }
+    } else if (request.type === 'ENROLL_SPEAKER') {
+      console.log("Background: Received ENROLL_SPEAKER request.");
+      enrollSpeaker(request.speakerName, request.youtubeUrl);
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function enrollSpeaker(speakerName, youtubeUrl) {
+  try {
+    const response = await fetch('http://localhost:5000/enroll', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: speakerName,
+        url: youtubeUrl,
+      }),
+    });
+    const data = await response.json();
+    console.log('Enrollment response:', data);
+  } catch (error) {
+    console.error('Error enrolling speaker:', error);
+  }
+}
 
 async function startCapture() {
   const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
