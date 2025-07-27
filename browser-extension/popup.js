@@ -45,11 +45,19 @@ enrollForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const speakerName = document.getElementById('speakerName').value;
   const youtubeUrl = document.getElementById('youtubeUrl').value;
+  const startTime = document.getElementById('startTime').value;
+  const endTime = document.getElementById('endTime').value;
   
   enrollStatus.textContent = 'Enrolling...';
   enrollStatus.style.color = 'black';
 
-  chrome.runtime.sendMessage({ type: 'ENROLL_SPEAKER', speakerName, youtubeUrl });
+  chrome.runtime.sendMessage({ 
+    type: 'ENROLL_SPEAKER', 
+    speakerName, 
+    youtubeUrl,
+    startTime,
+    endTime
+  });
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
