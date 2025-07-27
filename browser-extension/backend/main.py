@@ -121,14 +121,24 @@ async def enroll_speaker(payload: dict = Body(...)):
             "-o", downloaded_audio_path,
         ]
 
-        # If timestamps are provided, add post-processing arguments for ffmpeg
+        # If timestamps are provided, use --download-sections for efficiency
         if start_time and end_time:
-            postprocessor_args = f"ffmpeg:-ss {start_time} -to {end_time}"
-            command.extend(["--postprocessor-args", postprocessor_args])
+            # The format is "*start_time-end_time"
+            command.extend(["--download-sections", f"*{start_time}-{end_time}"])
+        
+        # Force --force-keyframes-at-cuts to make the trimming more accurate
+        command.append("--force-keyframes-at-cuts")
 
         command.append(youtube_url)
         
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        # Use Popen to stream output in real-time (optional but good for debugging)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in iter(process.stdout.readline, ''):
+            print(line, end='')
+        process.wait()
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, command)
+
         print("Download complete.")
 
         # Enroll the speaker using the downloaded audio
@@ -149,8 +159,9 @@ async def enroll_speaker(payload: dict = Body(...)):
 
     except subprocess.CalledProcessError as e:
         print(f"An error occurred during enrollment subprocess: {e}")
-        print(f"Stderr: {e.stderr}")
-        return {"status": "error", "message": f"An error occurred during enrollment: {e.stderr}"}
+        # If the command was run with capture_output=True, stderr will be in e.stderr
+        error_output = e.stderr if e.stderr else "No stderr captured. Check logs."
+        return {"status": "error", "message": f"An error occurred during enrollment: {error_output}"}
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
