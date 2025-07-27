@@ -11,7 +11,7 @@ from pydub import AudioSegment
 from datetime import datetime
 import uuid
 import subprocess
-import json
+import sqlite3
 
 # --- Configuration for saving audio ---
 SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps"
@@ -38,16 +38,14 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# --- BACK TO PYANNOTE: Model Setup ---
+# --- Database and Model Setup ---
+DB_PATH = "/app/browser-extension/backend/speakers.db"
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
-# This will hold all loaded speaker embeddings, keyed by speaker name
 speaker_embeddings = {}
 
-def load_model_and_embedding():
-    """Loads the pyannote model and all enrolled speaker embeddings."""
+def load_model_and_embeddings():
+    """Loads the pyannote model and all enrolled speaker embeddings from the database."""
     global inference_model, speaker_embeddings
     
     # Load the pyannote model
@@ -64,35 +62,65 @@ def load_model_and_embedding():
         print(f"CRITICAL: Failed to load pyannote model: {e}")
         raise
 
-    # Load all pre-computed speaker embeddings
+    # Load speaker embeddings from the database
     speaker_embeddings.clear()
-    os.makedirs(SPEAKERS_DIR, exist_ok=True)
-    print(f"Loading speaker embeddings from: {SPEAKERS_DIR}")
+    print(f"Loading speaker embeddings from database: {DB_PATH}")
     
-    for npy_file in os.listdir(SPEAKERS_DIR):
-        if npy_file.endswith(".npy"):
-            speaker_name = os.path.splitext(npy_file)[0]
-            file_path = os.path.join(SPEAKERS_DIR, npy_file)
+    if not os.path.exists(DB_PATH):
+        print(f"Database not found at {DB_PATH}. No speakers will be loaded.")
+        return
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Query for all speakers and their associated embedding paths
+        cursor.execute("""
+            SELECT s.name, src.embedding_path
+            FROM speakers s
+            JOIN sources src ON s.id = src.speaker_id
+        """)
+        
+        rows = cursor.fetchall()
+        
+        for speaker_name, embedding_path in rows:
+            if not os.path.exists(embedding_path):
+                print(f"Warning: Embedding file not found for {speaker_name} at {embedding_path}. Skipping.")
+                continue
+            
             try:
-                embedding_npy = np.load(file_path)
+                embedding_npy = np.load(embedding_path)
                 embedding_tensor = torch.from_numpy(embedding_npy).to(device)
                 
                 if embedding_tensor.dim() == 1:
                     embedding_tensor = embedding_tensor.unsqueeze(0)
                 
-                speaker_embeddings[speaker_name] = embedding_tensor
-                print(f"- Loaded embedding for speaker: {speaker_name}")
+                # If speaker already has embeddings, average them.
+                if speaker_name in speaker_embeddings:
+                    existing_embedding = speaker_embeddings[speaker_name]
+                    combined_embedding = torch.cat([existing_embedding, embedding_tensor], dim=0)
+                    speaker_embeddings[speaker_name] = combined_embedding.mean(dim=0, keepdim=True)
+                else:
+                    speaker_embeddings[speaker_name] = embedding_tensor
+                
+                print(f"- Loaded embedding for speaker: {speaker_name} from {embedding_path}")
             except Exception as e:
-                print(f"Error loading embedding for {speaker_name} from {file_path}: {e}")
-    
+                print(f"Error loading embedding for {speaker_name} from {embedding_path}: {e}")
+                
+    except sqlite3.Error as e:
+        print(f"Database error while loading speakers: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
     if not speaker_embeddings:
-        print("No speaker embeddings found.")
+        print("No speaker embeddings found in the database.")
     else:
         print(f"Successfully loaded {len(speaker_embeddings)} speaker(s).")
 
 @app.on_event("startup")
 async def startup_event():
-    load_model_and_embedding()
+    load_model_and_embeddings()
 
 @app.post("/enroll")
 async def enroll_speaker(payload: dict = Body(...)):
@@ -100,73 +128,75 @@ async def enroll_speaker(payload: dict = Body(...)):
     youtube_url = payload.get("url")
     start_time = payload.get("start")
     end_time = payload.get("end")
+    timestamp = f"{start_time}-{end_time}" if start_time and end_time else None
 
     if not speaker_name or not youtube_url:
         return {"status": "error", "message": "Missing speaker name or YouTube URL."}
 
-    # Create a temporary directory for the download if it doesn't exist
+    # --- Check for existing speaker name ---
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        if cursor.fetchone():
+            # For now, we allow adding more sources to an existing speaker.
+            # The UI can be updated to reflect this is an "add more samples" action.
+            pass
+    except sqlite3.Error as e:
+        return {"status": "error", "message": f"Database error: {e}"}
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
     temp_dir = "/app/browser-extension/backend/tmp"
     os.makedirs(temp_dir, exist_ok=True)
-    
-    # Define the output path for the downloaded audio
-    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}.wav")
-    embedding_output_path = os.path.join(SPEAKERS_DIR, f"{speaker_name}.npy")
+    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}_{uuid.uuid4().hex}.wav")
 
     try:
-        # Use yt-dlp to download and extract audio
         print(f"Downloading audio from {youtube_url} for speaker {speaker_name}...")
         command = [
-            "yt-dlp",
-            "-x", "--audio-format", "wav",
+            "yt-dlp", "-x", "--audio-format", "wav",
             "-o", downloaded_audio_path,
+            "--force-keyframes-at-cuts"
         ]
-
-        # If timestamps are provided, use --download-sections for efficiency
-        if start_time and end_time:
-            # The format is "*start_time-end_time"
-            command.extend(["--download-sections", f"*{start_time}-{end_time}"])
-        
-        # Force --force-keyframes-at-cuts to make the trimming more accurate
-        command.append("--force-keyframes-at-cuts")
-
+        if timestamp:
+            command.extend(["--download-sections", f"*{timestamp}"])
         command.append(youtube_url)
         
-        # Use Popen to stream output in real-time (optional but good for debugging)
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(process.stdout.readline, ''):
             print(line, end='')
         process.wait()
         if process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command)
-
         print("Download complete.")
 
-        # Enroll the speaker using the downloaded audio
         print(f"Enrolling speaker {speaker_name} from {downloaded_audio_path}...")
         enroll_command = [
-            "python3",
-            "/app/scripts/enroll_speaker.py",
+            "python3", "/app/scripts/enroll_speaker.py",
+            "-n", speaker_name,
             "-i", downloaded_audio_path,
-            "-o", embedding_output_path
+            "--url", youtube_url
         ]
+        if timestamp:
+            enroll_command.extend(["--timestamp", timestamp])
+        
         subprocess.run(enroll_command, check=True, capture_output=True, text=True)
-        print("Enrollment complete.")
+        print("Enrollment script finished.")
 
-        # Reload the embeddings after enrollment
-        load_model_and_embedding()
+        # Reload embeddings to include the new one
+        load_model_and_embeddings()
 
         return {"status": "success", "message": f"Speaker {speaker_name} enrolled successfully."}
 
     except subprocess.CalledProcessError as e:
-        print(f"An error occurred during enrollment subprocess: {e}")
-        # If the command was run with capture_output=True, stderr will be in e.stderr
-        error_output = e.stderr if e.stderr else "No stderr captured. Check logs."
-        return {"status": "error", "message": f"An error occurred during enrollment: {error_output}"}
+        error_output = e.stderr if e.stderr else "No stderr captured."
+        print(f"Enrollment subprocess error: {error_output}")
+        return {"status": "error", "message": f"Enrollment failed: {error_output}"}
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred during enrollment: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
     finally:
-        # Clean up the temporary downloaded audio file
         if os.path.exists(downloaded_audio_path):
             os.remove(downloaded_audio_path)
 
@@ -243,7 +273,7 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
         # Clean up the temporary WAV file
         if saved_success_path and os.path.exists(saved_success_path):
             try:
-                os.remove(saved_success_path)
+                os..remove(saved_success_path)
             except Exception as cleanup_e:
                 print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
 
