@@ -1,5 +1,20 @@
 let isCapturing = false;
 
+chrome.runtime.onInstalled.addListener(async () => {
+  const { userId } = await chrome.storage.local.get('userId');
+  if (!userId) {
+    const newUserId = self.crypto.randomUUID();
+    await chrome.storage.local.set({ userId: newUserId });
+    console.log('New user ID generated:', newUserId);
+  }
+});
+
+// Helper function to get the user ID
+async function getUserId() {
+  const { userId } = await chrome.storage.local.get('userId');
+  return userId;
+}
+
 // Main message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Use a an async IIFE (Immediately Invoked Function Expression) to handle async logic
@@ -79,8 +94,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function deleteSpeaker(speakerName) {
   try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
     const encodedSpeakerName = encodeURIComponent(speakerName);
-    const response = await fetch(`http://localhost:8000/speaker/${encodedSpeakerName}`, {
+    const response = await fetch(`http://localhost:8000/speaker/${encodedSpeakerName}?userId=${userId}`, {
       method: 'DELETE',
     });
     const data = await response.json();
@@ -95,12 +114,16 @@ async function deleteSpeaker(speakerName) {
 
 async function deleteSource(speakerName, sourceUrl, timestamp) {
   try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
     const response = await fetch('http://localhost:8000/source', {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ speakerName, sourceUrl, timestamp }),
+      body: JSON.stringify({ speakerName, sourceUrl, timestamp, userId }),
     });
     const data = await response.json();
     console.log('Delete source response:', data);
@@ -114,7 +137,11 @@ async function deleteSource(speakerName, sourceUrl, timestamp) {
 
 async function getEnrolledSpeakers() {
   try {
-    const response = await fetch('http://localhost:8000/get-speakers');
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
+    const response = await fetch(`http://localhost:8000/get-speakers?userId=${userId}`);
     const data = await response.json();
     console.log('Get enrolled speakers response:', data);
     chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: data.speakers || [] });
@@ -126,9 +153,13 @@ async function getEnrolledSpeakers() {
 
 async function checkSpeaker(speakerName) {
   try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
     // URL-encode the speaker name to handle spaces or special characters
     const encodedSpeakerName = encodeURIComponent(speakerName);
-    const response = await fetch(`http://localhost:8000/check-speaker/${encodedSpeakerName}`);
+    const response = await fetch(`http://localhost:8000/check-speaker/${encodedSpeakerName}?userId=${userId}`);
     const data = await response.json();
     console.log('Check speaker response:', data);
     // Forward the response from the backend to the popup
@@ -142,11 +173,16 @@ async function checkSpeaker(speakerName) {
 
 async function wipeDatabase() {
   try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
     const response = await fetch('http://localhost:8000/wipe-db', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify({ userId }),
     });
     const data = await response.json();
     console.log('Wipe DB response:', data);
@@ -159,6 +195,10 @@ async function wipeDatabase() {
 
 async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
   try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("User ID not found.");
+    }
     const response = await fetch('http://localhost:8000/enroll', {
       method: 'POST',
       headers: {
@@ -169,6 +209,7 @@ async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
         url: youtubeUrl,
         start: startTime,
         end: endTime,
+        userId: userId,
       }),
     });
     const data = await response.json();
