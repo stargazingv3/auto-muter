@@ -21,8 +21,26 @@
     <button type="submit">Enroll</button>
   </form>
   <p id="enrollStatus"></p>
+
+  <div id="speakerExistsSection" style="display: none; padding: 5px; border: 1px solid #ccc; margin-top: 10px;">
+    <p id="speakerExistsMessage" style="font-weight: bold;"></p>
+    <div id="speakerSources" style="display: none; text-align: left; max-height: 100px; overflow-y: auto; margin-bottom: 10px;">
+        <strong>Existing Sources:</strong>
+        <ul id="speakerSourcesList" style="list-style-type: none; padding-left: 5px; font-size: 0.9em;"></ul>
+    </div>
+    <button type="button" id="addSampleButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Add New Sample</button>
+    <button type="button" id="showSourcesButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Show Sources</button>
+    <button type="button" id="useDifferentNameButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Use Different Name</button>
+  </div>
+
   <hr>
   <button id="wipeDbButton">Wipe Database</button>
+  <hr>
+  <h2>Enrolled Speakers</h2>
+  <button id="refreshSpeakers">Refresh List</button>
+  <ul id="speakerList">
+    <li>Loading...</li>
+  </ul>
   <script src="popup.js"></script>
 </body>
 </html>

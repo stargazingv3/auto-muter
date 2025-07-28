@@ -58,12 +58,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.type === 'WIPE_DB') {
       console.log("Background: Received WIPE_DB request.");
       wipeDatabase();
+    } else if (request.type === 'CHECK_SPEAKER') {
+      console.log("Background: Received CHECK_SPEAKER request for", request.speakerName);
+      checkSpeaker(request.speakerName);
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function checkSpeaker(speakerName) {
+  try {
+    // URL-encode the speaker name to handle spaces or special characters
+    const encodedSpeakerName = encodeURIComponent(speakerName);
+    const response = await fetch(`http://localhost:8000/check-speaker/${encodedSpeakerName}`);
+    const data = await response.json();
+    console.log('Check speaker response:', data);
+    // Forward the response from the backend to the popup
+    chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', ...data });
+  } catch (error) {
+    console.error('Error checking speaker:', error);
+    // Send an error message back to the popup
+    chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', exists: false, sources: [], error: error.toString() });
+  }
+}
 
 async function wipeDatabase() {
   try {
