@@ -61,12 +61,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.type === 'CHECK_SPEAKER') {
       console.log("Background: Received CHECK_SPEAKER request for", request.speakerName);
       checkSpeaker(request.speakerName);
+    } else if (request.type === 'GET_ENROLLED_SPEAKERS') {
+      console.log("Background: Received GET_ENROLLED_SPEAKERS request.");
+      getEnrolledSpeakers();
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function getEnrolledSpeakers() {
+  try {
+    const response = await fetch('http://localhost:8000/get-speakers');
+    const data = await response.json();
+    console.log('Get enrolled speakers response:', data);
+    chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: data.speakers || [] });
+  } catch (error) {
+    console.error('Error getting enrolled speakers:', error);
+    chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: [], error: error.toString() });
+  }
+}
 
 async function checkSpeaker(speakerName) {
   try {

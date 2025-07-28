@@ -17,19 +17,21 @@ const showSourcesButton = document.getElementById('showSourcesButton');
 const useDifferentNameButton = document.getElementById('useDifferentNameButton');
 
 // --- Initial State Setup ---
-chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
-  if (chrome.runtime.lastError) {
-    console.error(chrome.runtime.lastError.message);
-    return;
-  }
-  if (response && response.isCapturing) {
-    startStopButton.textContent = 'Stop';
-  } else {
-    startStopButton.textContent = 'Start';
-  }
-});
-
 document.addEventListener('DOMContentLoaded', () => {
+  // Get initial capture state
+  chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error(chrome.runtime.lastError.message);
+      return;
+    }
+    if (response && response.isCapturing) {
+      startStopButton.textContent = 'Stop';
+    } else {
+      startStopButton.textContent = 'Start';
+    }
+  });
+  
+  // Load the initial speaker list
   refreshSpeakerList();
 });
 
@@ -69,32 +71,29 @@ enrollForm.addEventListener('submit', (event) => {
   enrollStatus.textContent = `Checking for '${speakerName}'...`;
   enrollStatus.style.color = 'black';
   
-  // Check if the speaker exists before enrolling
   chrome.runtime.sendMessage({ type: 'CHECK_SPEAKER', speakerName });
 });
 
 addSampleButton.addEventListener('click', () => {
-  // User confirmed they want to add a sample to an existing speaker
   proceedWithEnrollment();
 });
 
 showSourcesButton.addEventListener('click', () => {
-  // Toggle visibility of the sources list
   const isHidden = speakerSources.style.display === 'none';
   speakerSources.style.display = isHidden ? 'block' : 'none';
   showSourcesButton.textContent = isHidden ? 'Hide Sources' : 'Show Sources';
 });
 
 useDifferentNameButton.addEventListener('click', () => {
-  // Hide the 'speaker exists' section and show the form again
   resetEnrollmentForm();
   document.getElementById('speakerName').focus();
 });
 
 
-// --- Message Handling ---
+// --- Single, Consolidated Message Handler ---
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log("Popup received message:", request.type, request);
   switch (request.type) {
     case 'ENROLLMENT_STATUS':
       handleEnrollmentStatus(request);
@@ -103,13 +102,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleWipeDbStatus(request);
       break;
     case 'ENROLLED_SPEAKERS_LIST':
-      updateSpeakerList(request.speakers);
+      updateSpeakerList(request);
       break;
     case 'SPEAKER_CHECK_RESULT':
       handleSpeakerCheckResult(request);
       break;
   }
-  return true; // Keep the message channel open for async responses
+  // Return true for async message handling if needed, though it's safer to manage UI updates synchronously here.
 });
 
 
@@ -142,12 +141,10 @@ function handleSpeakerCheckResult(request) {
   const speakerName = document.getElementById('speakerName').value.trim();
 
   if (request.exists) {
-    // Speaker exists, show the confirmation UI
     enrollForm.style.display = 'none';
     speakerExistsSection.style.display = 'block';
     speakerExistsMessage.textContent = `A speaker named '${speakerName}' already exists.`;
     
-    // Populate sources list
     speakerSourcesList.innerHTML = '';
     if (request.sources && request.sources.length > 0) {
       request.sources.forEach(source => {
@@ -164,10 +161,9 @@ function handleSpeakerCheckResult(request) {
       li.textContent = 'No sources found for this speaker.';
       speakerSourcesList.appendChild(li);
     }
-    enrollStatus.textContent = ''; // Clear status
+    enrollStatus.textContent = '';
 
   } else {
-    // Speaker does not exist, proceed directly with enrollment
     proceedWithEnrollment();
   }
 }
@@ -177,7 +173,7 @@ function handleEnrollmentStatus(request) {
     enrollStatus.textContent = request.message;
     enrollStatus.style.color = 'green';
     resetEnrollmentForm();
-    refreshSpeakerList(); // Refresh the list after successful enrollment
+    refreshSpeakerList();
   } else {
     showEnrollmentError(request.message);
   }
@@ -191,7 +187,7 @@ function handleWipeDbStatus(request) {
     enrollStatus.textContent = `Error: ${request.message}`;
     enrollStatus.style.color = 'red';
   }
-  refreshSpeakerList(); // Refresh the list after wiping
+  refreshSpeakerList();
 }
 
 function showEnrollmentError(message) {
@@ -209,14 +205,22 @@ function resetEnrollmentForm() {
 }
 
 function refreshSpeakerList() {
-  // This check is to prevent asking for a list that doesn't exist in the HTML yet
   if (speakerList) {
+    speakerList.innerHTML = '<li>Loading...</li>'; // Show loading indicator
     chrome.runtime.sendMessage({ type: 'GET_ENROLLED_SPEAKERS' });
   }
 }
 
-function updateSpeakerList(speakers) {
+function updateSpeakerList(request) {
   if (!speakerList) return;
+  
+  if (request.error) {
+    speakerList.innerHTML = '<li>Error loading list.</li>';
+    console.error("Error loading speaker list:", request.error);
+    return;
+  }
+
+  const speakers = request.speakers;
   speakerList.innerHTML = ''; // Clear existing list
   if (speakers && speakers.length > 0) {
     speakers.forEach(speaker => {

@@ -401,6 +401,34 @@ async def wipe_db():
         load_model_and_embeddings()
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
+@app.get("/get-speakers")
+async def get_speakers():
+    """
+    Returns a list of all unique speaker names from the database.
+    """
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    
+    if not os.path.exists(DB_PATH):
+        return {"speakers": []}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM speakers ORDER BY name ASC")
+        
+        speakers = [row[0] for row in cursor.fetchall()]
+        
+        conn.close()
+        return {"speakers": speakers}
+        
+    except sqlite3.Error as e:
+        print(f"Database error while fetching speakers: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"speakers": [], "error": str(e)}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
