@@ -45,7 +45,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 speaker_embeddings = {}
 
 def load_model_and_embeddings():
-    """Loads the pyannote model and all enrolled speaker embeddings from the database."""
+    """
+    Loads the pyannote model and all enrolled speaker embeddings from the database.
+    Embeddings are loaded from a BLOB column.
+    """
     global inference_model, speaker_embeddings
     
     # Load the pyannote model
@@ -74,22 +77,19 @@ def load_model_and_embeddings():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Query for all speakers and their associated embedding paths
+        # Query for all speakers and their associated embeddings
         cursor.execute("""
-            SELECT s.name, src.embedding_path
+            SELECT s.name, src.embedding
             FROM speakers s
             JOIN sources src ON s.id = src.speaker_id
         """)
         
         rows = cursor.fetchall()
         
-        for speaker_name, embedding_path in rows:
-            if not os.path.exists(embedding_path):
-                print(f"Warning: Embedding file not found for {speaker_name} at {embedding_path}. Skipping.")
-                continue
-            
+        for speaker_name, embedding_blob in rows:
             try:
-                embedding_npy = np.load(embedding_path)
+                # Convert BLOB back to numpy array, then to a tensor
+                embedding_npy = np.frombuffer(embedding_blob, dtype=np.float32) # Ensure correct dtype
                 embedding_tensor = torch.from_numpy(embedding_npy).to(device)
                 
                 if embedding_tensor.dim() == 1:
@@ -103,9 +103,9 @@ def load_model_and_embeddings():
                 else:
                     speaker_embeddings[speaker_name] = embedding_tensor
                 
-                print(f"- Loaded embedding for speaker: {speaker_name} from {embedding_path}")
+                print(f"- Loaded embedding for speaker: {speaker_name}")
             except Exception as e:
-                print(f"Error loading embedding for {speaker_name} from {embedding_path}: {e}")
+                print(f"Error loading embedding for {speaker_name}: {e}")
                 
     except sqlite3.Error as e:
         print(f"Database error while loading speakers: {e}")
@@ -287,32 +287,34 @@ async def wipe_db():
     """
     Wipes the entire speaker database and reinitializes it.
     This version is optimized to perform all operations in-process
-    without calling an external script.
+    and stores embeddings as BLOBs.
     """
     global speaker_embeddings
     DB_PATH = "/app/browser-extension/backend/speakers.db"
-    SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
+    SPEAKERS_DIR = "/app/browser-extension/backend/speakers" # Kept for cleanup
 
     try:
         # 1. Clear in-memory embeddings
         speaker_embeddings.clear()
         print("In-memory speaker embeddings cleared.")
 
-        # 2. Delete all .npy embedding files from the speakers directory
+        # 2. Clean up old .npy files if the directory exists
         if os.path.exists(SPEAKERS_DIR):
             for npy_file in os.listdir(SPEAKERS_DIR):
                 if npy_file.endswith(".npy"):
-                    file_path = os.path.join(SPEAKERS_DIR, npy_file)
-                    os.remove(file_path)
-            print("All .npy embedding files have been deleted.")
+                    os.remove(os.path.join(SPEAKERS_DIR, npy_file))
+            # Optional: Remove the directory if it's empty
+            if not os.listdir(SPEAKERS_DIR):
+                os.rmdir(SPEAKERS_DIR)
+                print("Cleaned up and removed empty speakers directory.")
 
         # 3. Delete the database file to ensure a clean start
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
             print(f"Database file at {DB_PATH} has been deleted.")
 
-        # 4. Re-initialize the database schema directly
-        print("Re-initializing the database schema...")
+        # 4. Re-initialize the database schema directly with BLOB storage
+        print("Re-initializing the database schema for BLOB storage...")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
@@ -324,14 +326,14 @@ async def wipe_db():
         );
         """)
         
-        # Create 'sources' table
+        # Create 'sources' table with 'embedding' as BLOB
         cursor.execute("""
         CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             speaker_id INTEGER NOT NULL,
             source_url TEXT,
             timestamp TEXT,
-            embedding_path TEXT NOT NULL,
+            embedding BLOB NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (speaker_id) REFERENCES speakers (id)
         );
@@ -343,17 +345,15 @@ async def wipe_db():
         
         conn.commit()
         conn.close()
-        print("Database schema re-initialized successfully.")
+        print("Database schema re-initialized successfully for BLOB storage.")
 
         # 5. Reload embeddings (which will now be empty)
         load_model_and_embeddings()
 
-        return {"status": "success", "message": "Database wiped and reinitialized successfully."}
+        return {"status": "success", "message": "Database wiped and reinitialized for BLOB storage."}
     
     except Exception as e:
         print(f"An unexpected error occurred during DB wipe: {e}")
-        # It's good practice to also reload the model and embeddings to ensure
-        # the app state is consistent, even if the wipe failed midway.
         load_model_and_embeddings()
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
