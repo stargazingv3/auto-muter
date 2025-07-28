@@ -60,12 +60,31 @@ enrollForm.addEventListener('submit', (event) => {
   });
 });
 
+const wipeDbButton = document.getElementById('wipeDbButton');
+
+// Listener for the wipe database button
+wipeDbButton.addEventListener('click', () => {
+  if (confirm("Are you sure you want to wipe all enrolled speakers? This action cannot be undone.")) {
+    enrollStatus.textContent = 'Wiping database...';
+    enrollStatus.style.color = 'black';
+    chrome.runtime.sendMessage({ type: 'WIPE_DB' });
+  }
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'ENROLLMENT_STATUS') {
     if (request.status === 'success') {
       enrollStatus.textContent = request.message;
       enrollStatus.style.color = 'green';
       enrollForm.reset();
+    } else {
+      enrollStatus.textContent = `Error: ${request.message}`;
+      enrollStatus.style.color = 'red';
+    }
+  } else if (request.type === 'WIPE_DB_STATUS') {
+    if (request.status === 'success') {
+      enrollStatus.textContent = request.message;
+      enrollStatus.style.color = 'green';
     } else {
       enrollStatus.textContent = `Error: ${request.message}`;
       enrollStatus.style.color = 'red';
