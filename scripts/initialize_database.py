@@ -32,7 +32,7 @@ try:
         speaker_id INTEGER NOT NULL,
         source_url TEXT,
         timestamp TEXT,
-        embedding_path TEXT NOT NULL,
+        embedding BLOB NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (speaker_id) REFERENCES speakers (id)
     );
