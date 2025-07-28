@@ -8,20 +8,19 @@ let stream;
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.type === 'start-capture') {
     if (isCapturing) return;
-    await startCapture(message.streamId);
+    await startCapture(message.streamId, message.userId);
   } else if (message.type === 'stop-capture') {
     await stopCapture();
   }
 });
 
-async function getUserId() {
-  const { userId } = await chrome.storage.local.get('userId');
-  return userId;
-}
-
-async function startCapture(streamId) {
+async function startCapture(streamId, userId) {
   if (!streamId) {
     console.error('Offscreen: No stream ID received.');
+    return;
+  }
+  if (!userId) {
+    console.error('Offscreen: No user ID received.');
     return;
   }
 
@@ -45,12 +44,6 @@ async function startCapture(streamId) {
     gainNode = audioContext.createGain(); // Create the volume control
     source.connect(gainNode); // Connect source to the volume control
     gainNode.connect(audioContext.destination); // Connect volume control to speakers
-
-    const userId = await getUserId();
-    if (!userId) {
-      console.error('Offscreen: User ID not found.');
-      return;
-    }
 
     // Connect to backend for processing
     socket = new WebSocket(`ws://localhost:8000/ws/${userId}`);

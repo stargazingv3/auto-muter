@@ -265,9 +265,10 @@ async function setupOffscreenDocument(tabId) {
   });
 
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  const userId = await getUserId();
 
   if (existingContexts.length > 0) {
-    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId, userId: userId });
     return;
   }
 
@@ -281,6 +282,6 @@ async function setupOffscreenDocument(tabId) {
     });
     await creating;
     creating = null;
-    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId, userId: userId });
   }
 }
