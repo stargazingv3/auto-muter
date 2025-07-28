@@ -122,6 +122,50 @@ def load_model_and_embeddings():
 async def startup_event():
     load_model_and_embeddings()
 
+
+@app.get("/check-speaker/{speaker_name}")
+async def check_speaker(speaker_name: str):
+    """
+    Checks if a speaker with the given name already exists and returns their sources if they do.
+    """
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    
+    if not os.path.exists(DB_PATH):
+        return {"exists": False, "sources": []}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"exists": False, "sources": []}
+        
+        speaker_id = speaker_row[0]
+        
+        cursor.execute(
+            "SELECT source_url, timestamp FROM sources WHERE speaker_id = ?", 
+            (speaker_id,)
+        )
+        
+        sources = [
+            {"url": url, "timestamp": ts} 
+            for url, ts in cursor.fetchall()
+        ]
+        
+        conn.close()
+        return {"exists": True, "sources": sources}
+        
+    except sqlite3.Error as e:
+        print(f"Database error while checking speaker: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"exists": False, "sources": [], "error": str(e)}
+
+
 @app.post("/enroll")
 async def enroll_speaker(payload: dict = Body(...)):
     speaker_name = payload.get("name")
