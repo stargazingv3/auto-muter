@@ -64,12 +64,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.type === 'GET_ENROLLED_SPEAKERS') {
       console.log("Background: Received GET_ENROLLED_SPEAKERS request.");
       getEnrolledSpeakers();
+    } else if (request.type === 'DELETE_SPEAKER') {
+      console.log("Background: Received DELETE_SPEAKER request for", request.speakerName);
+      deleteSpeaker(request.speakerName);
+    } else if (request.type === 'DELETE_SOURCE') {
+      console.log("Background: Received DELETE_SOURCE request for", request.speakerName);
+      deleteSource(request.speakerName, request.sourceUrl, request.timestamp);
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function deleteSpeaker(speakerName) {
+  try {
+    const encodedSpeakerName = encodeURIComponent(speakerName);
+    const response = await fetch(`http://localhost:8000/speaker/${encodedSpeakerName}`, {
+      method: 'DELETE',
+    });
+    const data = await response.json();
+    console.log('Delete speaker response:', data);
+    // Forward the status to the popup
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
+  } catch (error) {
+    console.error('Error deleting speaker:', error);
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function deleteSource(speakerName, sourceUrl, timestamp) {
+  try {
+    const response = await fetch('http://localhost:8000/source', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ speakerName, sourceUrl, timestamp }),
+    });
+    const data = await response.json();
+    console.log('Delete source response:', data);
+    // Forward the status to the popup
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
+  } catch (error) {
+    console.error('Error deleting source:', error);
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
+  }
+}
 
 async function getEnrolledSpeakers() {
   try {

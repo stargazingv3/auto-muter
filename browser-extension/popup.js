@@ -18,7 +18,6 @@ const useDifferentNameButton = document.getElementById('useDifferentNameButton')
 
 // --- Initial State Setup ---
 document.addEventListener('DOMContentLoaded', () => {
-  // Get initial capture state
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
     if (chrome.runtime.lastError) {
       console.error(chrome.runtime.lastError.message);
@@ -30,8 +29,6 @@ document.addEventListener('DOMContentLoaded', () => {
       startStopButton.textContent = 'Start';
     }
   });
-  
-  // Load the initial speaker list
   refreshSpeakerList();
 });
 
@@ -40,20 +37,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 startStopButton.addEventListener('click', () => {
   const action = startStopButton.textContent === 'Start' ? 'START_CAPTURE' : 'STOP_CAPTURE';
-  chrome.runtime.sendMessage({ type: action }, () => {
-    window.close();
-  });
+  chrome.runtime.sendMessage({ type: action }, () => window.close());
 });
 
 testMuteButton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'TEST_MUTE' });
-  window.close();
+  chrome.runtime.sendMessage({ type: 'TEST_MUTE' }, () => window.close());
 });
 
 wipeDbButton.addEventListener('click', () => {
-  if (confirm("Are you sure you want to wipe all enrolled speakers? This action cannot be undone.")) {
-    enrollStatus.textContent = 'Wiping database...';
-    enrollStatus.style.color = 'black';
+  if (confirm("Are you sure you want to WIPE THE ENTIRE DATABASE? This action cannot be undone.")) {
+    showStatus('Wiping database...', 'black');
     chrome.runtime.sendMessage({ type: 'WIPE_DB' });
   }
 });
@@ -64,13 +57,10 @@ enrollForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const speakerName = document.getElementById('speakerName').value.trim();
   if (!speakerName) {
-    showEnrollmentError("Speaker name cannot be empty.");
+    showStatus("Speaker name cannot be empty.", 'red');
     return;
   }
-  
-  enrollStatus.textContent = `Checking for '${speakerName}'...`;
-  enrollStatus.style.color = 'black';
-  
+  showStatus(`Checking for '${speakerName}'...`, 'black');
   chrome.runtime.sendMessage({ type: 'CHECK_SPEAKER', speakerName });
 });
 
@@ -99,7 +89,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleEnrollmentStatus(request);
       break;
     case 'WIPE_DB_STATUS':
-      handleWipeDbStatus(request);
+    case 'DELETE_STATUS':
+      handleDeleteStatus(request);
       break;
     case 'ENROLLED_SPEAKERS_LIST':
       updateSpeakerList(request);
@@ -108,7 +99,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleSpeakerCheckResult(request);
       break;
   }
-  // Return true for async message handling if needed, though it's safer to manage UI updates synchronously here.
 });
 
 
@@ -120,9 +110,12 @@ function proceedWithEnrollment() {
   const startTime = document.getElementById('startTime').value;
   const endTime = document.getElementById('endTime').value;
 
-  enrollStatus.textContent = 'Enrolling...';
-  enrollStatus.style.color = 'black';
+  if (!youtubeUrl) {
+      showStatus('YouTube URL is required.', 'red');
+      return;
+  }
 
+  showStatus('Enrolling...', 'black');
   chrome.runtime.sendMessage({ 
     type: 'ENROLL_SPEAKER', 
     speakerName, 
@@ -134,7 +127,7 @@ function proceedWithEnrollment() {
 
 function handleSpeakerCheckResult(request) {
   if (request.error) {
-    showEnrollmentError(`Error checking speaker: ${request.error}`);
+    showStatus(`Error: ${request.error}`, 'red');
     return;
   }
 
@@ -143,25 +136,40 @@ function handleSpeakerCheckResult(request) {
   if (request.exists) {
     enrollForm.style.display = 'none';
     speakerExistsSection.style.display = 'block';
-    speakerExistsMessage.textContent = `A speaker named '${speakerName}' already exists.`;
+    speakerExistsMessage.textContent = `Speaker '${speakerName}' already exists.`;
     
     speakerSourcesList.innerHTML = '';
     if (request.sources && request.sources.length > 0) {
       request.sources.forEach(source => {
         const li = document.createElement('li');
-        let text = source.url || 'Unknown URL';
-        if (source.timestamp) {
-            text += ` (${source.timestamp})`;
-        }
-        li.textContent = text;
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `${source.url}` + (source.timestamp ? ` (${source.timestamp})` : '');
+        textSpan.title = textSpan.textContent; // Full text on hover
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.className = 'small-button';
+        deleteBtn.onclick = () => {
+          if (confirm(`Delete this source?\n${textSpan.textContent}`)) {
+            showStatus('Deleting source...', 'black');
+            chrome.runtime.sendMessage({
+              type: 'DELETE_SOURCE',
+              speakerName: speakerName,
+              sourceUrl: source.url,
+              timestamp: source.timestamp
+            });
+          }
+        };
+        
+        li.appendChild(textSpan);
+        li.appendChild(deleteBtn);
         speakerSourcesList.appendChild(li);
       });
     } else {
-      const li = document.createElement('li');
-      li.textContent = 'No sources found for this speaker.';
-      speakerSourcesList.appendChild(li);
+      speakerSourcesList.innerHTML = '<li>No sources found for this speaker.</li>';
     }
-    enrollStatus.textContent = '';
+    showStatus('');
 
   } else {
     proceedWithEnrollment();
@@ -170,29 +178,27 @@ function handleSpeakerCheckResult(request) {
 
 function handleEnrollmentStatus(request) {
   if (request.status === 'success') {
-    enrollStatus.textContent = request.message;
-    enrollStatus.style.color = 'green';
+    showStatus(request.message, 'green');
     resetEnrollmentForm();
     refreshSpeakerList();
   } else {
-    showEnrollmentError(request.message);
+    showStatus(`Error: ${request.message}`, 'red');
   }
 }
 
-function handleWipeDbStatus(request) {
-  if (request.status === 'success') {
-    enrollStatus.textContent = request.message;
-    enrollStatus.style.color = 'green';
-  } else {
-    enrollStatus.textContent = `Error: ${request.message}`;
-    enrollStatus.style.color = 'red';
-  }
-  refreshSpeakerList();
+function handleDeleteStatus(request) {
+    if (request.status === 'success') {
+        showStatus(request.message, 'green');
+        resetEnrollmentForm(); // Also reset the form in case we were in the middle of checking a speaker
+        refreshSpeakerList();
+    } else {
+        showStatus(`Error: ${request.message}`, 'red');
+    }
 }
 
-function showEnrollmentError(message) {
-  enrollStatus.textContent = `Error: ${message}`;
-  enrollStatus.style.color = 'red';
+function showStatus(message, color = 'black') {
+  enrollStatus.textContent = message;
+  enrollStatus.style.color = color;
 }
 
 function resetEnrollmentForm() {
@@ -201,12 +207,12 @@ function resetEnrollmentForm() {
   speakerExistsSection.style.display = 'none';
   speakerSources.style.display = 'none';
   showSourcesButton.textContent = 'Show Sources';
-  enrollStatus.textContent = '';
+  showStatus('');
 }
 
 function refreshSpeakerList() {
   if (speakerList) {
-    speakerList.innerHTML = '<li>Loading...</li>'; // Show loading indicator
+    speakerList.innerHTML = '<li>Loading...</li>';
     chrome.runtime.sendMessage({ type: 'GET_ENROLLED_SPEAKERS' });
   }
 }
@@ -221,16 +227,29 @@ function updateSpeakerList(request) {
   }
 
   const speakers = request.speakers;
-  speakerList.innerHTML = ''; // Clear existing list
+  speakerList.innerHTML = '';
   if (speakers && speakers.length > 0) {
-    speakers.forEach(speaker => {
+    speakers.forEach(speakerName => {
       const li = document.createElement('li');
-      li.textContent = speaker;
+      
+      const textSpan = document.createElement('span');
+      textSpan.textContent = speakerName;
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.className = 'small-button';
+      deleteBtn.onclick = () => {
+        if (confirm(`Are you sure you want to delete the speaker '${speakerName}' and all their audio samples?`)) {
+          showStatus(`Deleting '${speakerName}'...`, 'black');
+          chrome.runtime.sendMessage({ type: 'DELETE_SPEAKER', speakerName });
+        }
+      };
+      
+      li.appendChild(textSpan);
+      li.appendChild(deleteBtn);
       speakerList.appendChild(li);
     });
   } else {
-    const li = document.createElement('li');
-    li.textContent = 'No speakers enrolled.';
-    speakerList.appendChild(li);
+    speakerList.innerHTML = '<li>No speakers enrolled.</li>';
   }
 }

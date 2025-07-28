@@ -3,14 +3,20 @@
 <head>
   <title>Auto Muter</title>
   <style>
-    body { width: 150px; text-align: center; }
-    button { width: 100px; margin: 5px 0; }
+    body { font-family: sans-serif; width: 280px; text-align: center; padding: 5px; }
+    button { margin: 5px 0; cursor: pointer; }
+    hr { width: 100%; }
+    input { width: 95%; margin-bottom: 5px; }
+    .full-width { width: 100%; }
+    .small-button { width: auto; padding: 3px 6px; font-size: 0.8em; margin-left: 8px; }
+    #speakerList, #speakerSourcesList { list-style-type: none; padding-left: 5px; text-align: left; }
+    #speakerList li, #speakerSourcesList li { margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
   </style>
 </head>
 <body>
-  <button id="startStopButton">Start</button>
+  <button id="startStopButton" class="full-width">Start</button>
   <hr>
-  <button id="testMuteButton">Test Mute</button>
+  <button id="testMuteButton" class="full-width">Test Mute</button>
   <hr>
   <h2>Enroll New Speaker</h2>
   <form id="enrollForm">
@@ -18,29 +24,29 @@
     <input type="url" id="youtubeUrl" placeholder="YouTube URL" required>
     <input type="text" id="startTime" placeholder="Start (e.g., 01:23)">
     <input type="text" id="endTime" placeholder="End (e.g., 02:45)">
-    <button type="submit">Enroll</button>
+    <button type="submit" class="full-width">Enroll</button>
   </form>
   <p id="enrollStatus"></p>
 
-  <div id="speakerExistsSection" style="display: none; padding: 5px; border: 1px solid #ccc; margin-top: 10px;">
+  <div id="speakerExistsSection" style="display: none; padding: 10px; border: 1px solid #ccc; margin-top: 10px;">
     <p id="speakerExistsMessage" style="font-weight: bold;"></p>
-    <div id="speakerSources" style="display: none; text-align: left; max-height: 100px; overflow-y: auto; margin-bottom: 10px;">
+    <div id="speakerSources" style="display: none; max-height: 120px; overflow-y: auto; margin-bottom: 10px;">
         <strong>Existing Sources:</strong>
-        <ul id="speakerSourcesList" style="list-style-type: none; padding-left: 5px; font-size: 0.9em;"></ul>
+        <ul id="speakerSourcesList"></ul>
     </div>
-    <button type="button" id="addSampleButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Add New Sample</button>
-    <button type="button" id="showSourcesButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Show Sources</button>
-    <button type="button" id="useDifferentNameButton" style="width: auto; padding: 3px 6px; font-size: 0.9em;">Use Different Name</button>
+    <button type="button" id="addSampleButton" class="small-button">Add New Sample</button>
+    <button type="button" id="showSourcesButton" class="small-button">Show Sources</button>
+    <button type="button" id="useDifferentNameButton" class="small-button">Cancel</button>
   </div>
 
   <hr>
-  <button id="wipeDbButton">Wipe Database</button>
-  <hr>
   <h2>Enrolled Speakers</h2>
-  <button id="refreshSpeakers">Refresh List</button>
+  <button id="refreshSpeakers" class="full-width">Refresh List</button>
   <ul id="speakerList">
     <li>Loading...</li>
   </ul>
+  <hr>
+  <button id="wipeDbButton" class="full-width">Wipe Entire Database</button>
   <script src="popup.js"></script>
 </body>
 </html>
