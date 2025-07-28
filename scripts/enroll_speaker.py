@@ -39,6 +39,7 @@ def convert_to_wav(audio_path, target_sr=16000):
 def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp):
     """
     Generates a speaker embedding and registers the speaker in the database.
+    The embedding is stored directly in the database as a BLOB.
     """
     if not os.path.exists(input_path):
         print(f"Error: Input path not found at {input_path}")
@@ -85,25 +86,21 @@ def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp):
         embedding_output = inference_model(temp_wav_path)
         
         if isinstance(embedding_output, SlidingWindowFeature):
-            embedding = embedding_output.data.mean(axis=0)
+            embedding_np = embedding_output.data.mean(axis=0)
         else:
-            embedding = np.asarray(embedding_output)
+            embedding_np = np.asarray(embedding_output)
+
+        # Convert numpy array to bytes for BLOB storage
+        embedding_blob = embedding_np.tobytes()
 
         # --- Save Embedding and Record Source ---
-        # Use a unique filename for the embedding to avoid conflicts
-        embedding_filename = f"{speaker_name}_{uuid.uuid4().hex}.npy"
-        embedding_path = os.path.join(SPEAKERS_DIR, embedding_filename)
-        
-        np.save(embedding_path, embedding)
-        print(f"Speaker embedding saved to: {embedding_path}")
-
-        # Add the source information to the database
+        # Add the source information to the database, including the embedding blob
         cursor.execute(
-            "INSERT INTO sources (speaker_id, source_url, timestamp, embedding_path) VALUES (?, ?, ?, ?)",
-            (speaker_id, source_url, timestamp, embedding_path)
+            "INSERT INTO sources (speaker_id, source_url, timestamp, embedding) VALUES (?, ?, ?, ?)",
+            (speaker_id, source_url, timestamp, embedding_blob)
         )
         conn.commit()
-        print("Source information successfully recorded in the database.")
+        print("Source information and embedding successfully recorded in the database.")
 
     except Exception as e:
         print(f"\nError during embedding generation or database operation: {e}")
