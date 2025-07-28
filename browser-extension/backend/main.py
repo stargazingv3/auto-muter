@@ -11,7 +11,7 @@ from pydub import AudioSegment
 from datetime import datetime
 import uuid
 import subprocess
-import json
+import sqlite3
 
 # --- Configuration for saving audio ---
 SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps"
@@ -38,16 +38,17 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# --- BACK TO PYANNOTE: Model Setup ---
+# --- Database and Model Setup ---
+DB_PATH = "/app/browser-extension/backend/speakers.db"
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-SPEAKERS_DIR = "/app/browser-extension/backend/speakers"
-# This will hold all loaded speaker embeddings, keyed by speaker name
 speaker_embeddings = {}
 
-def load_model_and_embedding():
-    """Loads the pyannote model and all enrolled speaker embeddings."""
+def load_model_and_embeddings():
+    """
+    Loads the pyannote model and all enrolled speaker embeddings from the database.
+    Embeddings are loaded from a BLOB column.
+    """
     global inference_model, speaker_embeddings
     
     # Load the pyannote model
@@ -64,35 +65,106 @@ def load_model_and_embedding():
         print(f"CRITICAL: Failed to load pyannote model: {e}")
         raise
 
-    # Load all pre-computed speaker embeddings
+    # Load speaker embeddings from the database
     speaker_embeddings.clear()
-    os.makedirs(SPEAKERS_DIR, exist_ok=True)
-    print(f"Loading speaker embeddings from: {SPEAKERS_DIR}")
+    print(f"Loading speaker embeddings from database: {DB_PATH}")
     
-    for npy_file in os.listdir(SPEAKERS_DIR):
-        if npy_file.endswith(".npy"):
-            speaker_name = os.path.splitext(npy_file)[0]
-            file_path = os.path.join(SPEAKERS_DIR, npy_file)
+    if not os.path.exists(DB_PATH):
+        print(f"Database not found at {DB_PATH}. No speakers will be loaded.")
+        return
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Query for all speakers and their associated embeddings
+        cursor.execute("""
+            SELECT s.name, src.embedding
+            FROM speakers s
+            JOIN sources src ON s.id = src.speaker_id
+        """)
+        
+        rows = cursor.fetchall()
+        
+        for speaker_name, embedding_blob in rows:
             try:
-                embedding_npy = np.load(file_path)
+                # Convert BLOB back to numpy array, then to a tensor
+                embedding_npy = np.frombuffer(embedding_blob, dtype=np.float32) # Ensure correct dtype
                 embedding_tensor = torch.from_numpy(embedding_npy).to(device)
                 
                 if embedding_tensor.dim() == 1:
                     embedding_tensor = embedding_tensor.unsqueeze(0)
                 
-                speaker_embeddings[speaker_name] = embedding_tensor
+                # If speaker already has embeddings, average them.
+                if speaker_name in speaker_embeddings:
+                    existing_embedding = speaker_embeddings[speaker_name]
+                    combined_embedding = torch.cat([existing_embedding, embedding_tensor], dim=0)
+                    speaker_embeddings[speaker_name] = combined_embedding.mean(dim=0, keepdim=True)
+                else:
+                    speaker_embeddings[speaker_name] = embedding_tensor
+                
                 print(f"- Loaded embedding for speaker: {speaker_name}")
             except Exception as e:
-                print(f"Error loading embedding for {speaker_name} from {file_path}: {e}")
-    
+                print(f"Error loading embedding for {speaker_name}: {e}")
+                
+    except sqlite3.Error as e:
+        print(f"Database error while loading speakers: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
     if not speaker_embeddings:
-        print("No speaker embeddings found.")
+        print("No speaker embeddings found in the database.")
     else:
         print(f"Successfully loaded {len(speaker_embeddings)} speaker(s).")
 
 @app.on_event("startup")
 async def startup_event():
-    load_model_and_embedding()
+    load_model_and_embeddings()
+
+
+@app.get("/check-speaker/{speaker_name}")
+async def check_speaker(speaker_name: str):
+    """
+    Checks if a speaker with the given name already exists and returns their sources if they do.
+    """
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    
+    if not os.path.exists(DB_PATH):
+        return {"exists": False, "sources": []}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"exists": False, "sources": []}
+        
+        speaker_id = speaker_row[0]
+        
+        cursor.execute(
+            "SELECT source_url, timestamp FROM sources WHERE speaker_id = ?", 
+            (speaker_id,)
+        )
+        
+        sources = [
+            {"url": url, "timestamp": ts} 
+            for url, ts in cursor.fetchall()
+        ]
+        
+        conn.close()
+        return {"exists": True, "sources": sources}
+        
+    except sqlite3.Error as e:
+        print(f"Database error while checking speaker: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"exists": False, "sources": [], "error": str(e)}
+
 
 @app.post("/enroll")
 async def enroll_speaker(payload: dict = Body(...)):
@@ -100,73 +172,79 @@ async def enroll_speaker(payload: dict = Body(...)):
     youtube_url = payload.get("url")
     start_time = payload.get("start")
     end_time = payload.get("end")
+    timestamp = f"{start_time}-{end_time}" if start_time and end_time else None
 
     if not speaker_name or not youtube_url:
         return {"status": "error", "message": "Missing speaker name or YouTube URL."}
 
-    # Create a temporary directory for the download if it doesn't exist
+    # --- Check for existing speaker name ---
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        if cursor.fetchone():
+            # For now, we allow adding more sources to an existing speaker.
+            # The UI can be updated to reflect this is an "add more samples" action.
+            pass
+    except sqlite3.Error as e:
+        return {"status": "error", "message": f"Database error: {e}"}
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
     temp_dir = "/app/browser-extension/backend/tmp"
     os.makedirs(temp_dir, exist_ok=True)
-    
-    # Define the output path for the downloaded audio
-    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}.wav")
-    embedding_output_path = os.path.join(SPEAKERS_DIR, f"{speaker_name}.npy")
+    downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}_{uuid.uuid4().hex}.wav")
 
     try:
-        # Use yt-dlp to download and extract audio
         print(f"Downloading audio from {youtube_url} for speaker {speaker_name}...")
         command = [
-            "yt-dlp",
-            "-x", "--audio-format", "wav",
+            "yt-dlp", "-x", "--audio-format", "wav",
             "-o", downloaded_audio_path,
+            "--force-keyframes-at-cuts"
         ]
-
-        # If timestamps are provided, use --download-sections for efficiency
-        if start_time and end_time:
-            # The format is "*start_time-end_time"
-            command.extend(["--download-sections", f"*{start_time}-{end_time}"])
-        
-        # Force --force-keyframes-at-cuts to make the trimming more accurate
-        command.append("--force-keyframes-at-cuts")
-
+        if timestamp:
+            command.extend(["--download-sections", f"*{timestamp}"])
         command.append(youtube_url)
         
-        # Use Popen to stream output in real-time (optional but good for debugging)
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(process.stdout.readline, ''):
             print(line, end='')
         process.wait()
         if process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command)
-
         print("Download complete.")
 
-        # Enroll the speaker using the downloaded audio
         print(f"Enrolling speaker {speaker_name} from {downloaded_audio_path}...")
         enroll_command = [
-            "python3",
-            "/app/scripts/enroll_speaker.py",
+            "python3", "/app/scripts/enroll_speaker.py",
+            "-n", speaker_name,
             "-i", downloaded_audio_path,
-            "-o", embedding_output_path
+            "--url", youtube_url
         ]
-        subprocess.run(enroll_command, check=True, capture_output=True, text=True)
-        print("Enrollment complete.")
+        if timestamp:
+            enroll_command.extend(["--timestamp", timestamp])
+        
+        # Capture stderr for better error reporting
+        result = subprocess.run(enroll_command, check=True, capture_output=True, text=True)
+        print("Enrollment script finished.")
+        print("Enrollment script stdout:", result.stdout)
+        print("Enrollment script stderr:", result.stderr)
 
-        # Reload the embeddings after enrollment
-        load_model_and_embedding()
+
+        # Reload embeddings to include the new one
+        load_model_and_embeddings()
 
         return {"status": "success", "message": f"Speaker {speaker_name} enrolled successfully."}
 
     except subprocess.CalledProcessError as e:
-        print(f"An error occurred during enrollment subprocess: {e}")
-        # If the command was run with capture_output=True, stderr will be in e.stderr
-        error_output = e.stderr if e.stderr else "No stderr captured. Check logs."
-        return {"status": "error", "message": f"An error occurred during enrollment: {error_output}"}
+        error_output = e.stderr if e.stderr else "No stderr captured."
+        print(f"Enrollment subprocess error: {error_output}")
+        return {"status": "error", "message": f"Enrollment failed: {error_output}"}
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred during enrollment: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
     finally:
-        # Clean up the temporary downloaded audio file
         if os.path.exists(downloaded_audio_path):
             os.remove(downloaded_audio_path)
 
@@ -248,6 +326,206 @@ def is_target_speaker(audio_data: bytes) -> tuple[bool, float]:
                 print(f"WARNING {log_prefix}: Failed to remove temporary WAV file: {cleanup_e}")
 
 # --- Remaining App Endpoints ---
+@app.post("/wipe-db")
+async def wipe_db():
+    """
+    Wipes the entire speaker database and reinitializes it.
+    This version is optimized to perform all operations in-process
+    and stores embeddings as BLOBs.
+    """
+    global speaker_embeddings
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    SPEAKERS_DIR = "/app/browser-extension/backend/speakers" # Kept for cleanup
+
+    try:
+        # 1. Clear in-memory embeddings
+        speaker_embeddings.clear()
+        print("In-memory speaker embeddings cleared.")
+
+        # 2. Clean up old .npy files if the directory exists
+        if os.path.exists(SPEAKERS_DIR):
+            for npy_file in os.listdir(SPEAKERS_DIR):
+                if npy_file.endswith(".npy"):
+                    os.remove(os.path.join(SPEAKERS_DIR, npy_file))
+            # Optional: Remove the directory if it's empty
+            if not os.listdir(SPEAKERS_DIR):
+                os.rmdir(SPEAKERS_DIR)
+                print("Cleaned up and removed empty speakers directory.")
+
+        # 3. Delete the database file to ensure a clean start
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+            print(f"Database file at {DB_PATH} has been deleted.")
+
+        # 4. Re-initialize the database schema directly with BLOB storage
+        print("Re-initializing the database schema for BLOB storage...")
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create 'speakers' table
+        cursor.execute("""
+        CREATE TABLE speakers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+        """)
+        
+        # Create 'sources' table with 'embedding' as BLOB
+        cursor.execute("""
+        CREATE TABLE sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            speaker_id INTEGER NOT NULL,
+            source_url TEXT,
+            timestamp TEXT,
+            embedding BLOB NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (speaker_id) REFERENCES speakers (id)
+        );
+        """)
+        
+        # Create indexes
+        cursor.execute("CREATE INDEX idx_speaker_name ON speakers (name);")
+        cursor.execute("CREATE INDEX idx_source_speaker_id ON sources (speaker_id);")
+        
+        conn.commit()
+        conn.close()
+        print("Database schema re-initialized successfully for BLOB storage.")
+
+        # 5. Reload embeddings (which will now be empty)
+        load_model_and_embeddings()
+
+        return {"status": "success", "message": "Database wiped and reinitialized for BLOB storage."}
+    
+    except Exception as e:
+        print(f"An unexpected error occurred during DB wipe: {e}")
+        load_model_and_embeddings()
+        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+
+@app.delete("/speaker/{speaker_name}")
+async def delete_speaker(speaker_name: str):
+    """
+    Deletes a speaker and all their associated sources from the database.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # First, get the speaker's ID
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"status": "error", "message": "Speaker not found."}
+        
+        speaker_id = speaker_row[0]
+        
+        # Delete all sources for this speaker
+        cursor.execute("DELETE FROM sources WHERE speaker_id = ?", (speaker_id,))
+        
+        # Delete the speaker itself
+        cursor.execute("DELETE FROM speakers WHERE id = ?", (speaker_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Reload the embeddings into memory to reflect the change
+        load_model_and_embeddings()
+        
+        return {"status": "success", "message": f"Speaker '{speaker_name}' and all their sources have been deleted."}
+
+    except sqlite3.Error as e:
+        print(f"Database error while deleting speaker: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"status": "error", "message": f"Database error: {e}"}
+
+@app.delete("/source")
+async def delete_source(payload: dict = Body(...)):
+    """
+    Deletes a specific source for a speaker.
+    """
+    speaker_name = payload.get("speakerName")
+    source_url = payload.get("sourceUrl")
+    timestamp = payload.get("timestamp")
+
+    if not speaker_name or not source_url:
+        return {"status": "error", "message": "Missing speaker name or source URL."}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Get the speaker's ID
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"status": "error", "message": "Speaker not found."}
+        
+        speaker_id = speaker_row[0]
+        
+        # Delete the specific source
+        # This handles the case where timestamp might be NULL
+        if timestamp:
+            cursor.execute(
+                "DELETE FROM sources WHERE speaker_id = ? AND source_url = ? AND timestamp = ?",
+                (speaker_id, source_url, timestamp)
+            )
+        else:
+            cursor.execute(
+                "DELETE FROM sources WHERE speaker_id = ? AND source_url = ? AND timestamp IS NULL",
+                (speaker_id, source_url)
+            )
+
+        if cursor.rowcount == 0:
+            conn.close()
+            return {"status": "error", "message": "Source not found for the given speaker."}
+
+        conn.commit()
+        conn.close()
+        
+        # Reload embeddings to reflect the change
+        load_model_and_embeddings()
+        
+        return {"status": "success", "message": "Source deleted successfully."}
+
+    except sqlite3.Error as e:
+        print(f"Database error while deleting source: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"status": "error", "message": f"Database error: {e}"}
+
+
+@app.get("/get-speakers")
+async def get_speakers():
+    """
+    Returns a list of all unique speaker names from the database.
+    """
+    DB_PATH = "/app/browser-extension/backend/speakers.db"
+    
+    if not os.path.exists(DB_PATH):
+        return {"speakers": []}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM speakers ORDER BY name ASC")
+        
+        speakers = [row[0] for row in cursor.fetchall()]
+        
+        conn.close()
+        return {"speakers": speakers}
+        
+    except sqlite3.Error as e:
+        print(f"Database error while fetching speakers: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"speakers": [], "error": str(e)}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -270,4 +548,3 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/")
 async def get():
     return HTMLResponse("<h1>FastAPI Pyannote Backend</h1><p>WebSocket endpoint is /ws</p>")
-

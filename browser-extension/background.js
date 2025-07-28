@@ -55,12 +55,107 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.type === 'ENROLL_SPEAKER') {
       console.log("Background: Received ENROLL_SPEAKER request.");
       enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
+    } else if (request.type === 'WIPE_DB') {
+      console.log("Background: Received WIPE_DB request.");
+      wipeDatabase();
+    } else if (request.type === 'CHECK_SPEAKER') {
+      console.log("Background: Received CHECK_SPEAKER request for", request.speakerName);
+      checkSpeaker(request.speakerName);
+    } else if (request.type === 'GET_ENROLLED_SPEAKERS') {
+      console.log("Background: Received GET_ENROLLED_SPEAKERS request.");
+      getEnrolledSpeakers();
+    } else if (request.type === 'DELETE_SPEAKER') {
+      console.log("Background: Received DELETE_SPEAKER request for", request.speakerName);
+      deleteSpeaker(request.speakerName);
+    } else if (request.type === 'DELETE_SOURCE') {
+      console.log("Background: Received DELETE_SOURCE request for", request.speakerName);
+      deleteSource(request.speakerName, request.sourceUrl, request.timestamp);
     }
   })();
 
   // Return true to indicate that we will respond asynchronously.
   return true;
 });
+
+async function deleteSpeaker(speakerName) {
+  try {
+    const encodedSpeakerName = encodeURIComponent(speakerName);
+    const response = await fetch(`http://localhost:8000/speaker/${encodedSpeakerName}`, {
+      method: 'DELETE',
+    });
+    const data = await response.json();
+    console.log('Delete speaker response:', data);
+    // Forward the status to the popup
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
+  } catch (error) {
+    console.error('Error deleting speaker:', error);
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function deleteSource(speakerName, sourceUrl, timestamp) {
+  try {
+    const response = await fetch('http://localhost:8000/source', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ speakerName, sourceUrl, timestamp }),
+    });
+    const data = await response.json();
+    console.log('Delete source response:', data);
+    // Forward the status to the popup
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
+  } catch (error) {
+    console.error('Error deleting source:', error);
+    chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function getEnrolledSpeakers() {
+  try {
+    const response = await fetch('http://localhost:8000/get-speakers');
+    const data = await response.json();
+    console.log('Get enrolled speakers response:', data);
+    chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: data.speakers || [] });
+  } catch (error) {
+    console.error('Error getting enrolled speakers:', error);
+    chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: [], error: error.toString() });
+  }
+}
+
+async function checkSpeaker(speakerName) {
+  try {
+    // URL-encode the speaker name to handle spaces or special characters
+    const encodedSpeakerName = encodeURIComponent(speakerName);
+    const response = await fetch(`http://localhost:8000/check-speaker/${encodedSpeakerName}`);
+    const data = await response.json();
+    console.log('Check speaker response:', data);
+    // Forward the response from the backend to the popup
+    chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', ...data });
+  } catch (error) {
+    console.error('Error checking speaker:', error);
+    // Send an error message back to the popup
+    chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', exists: false, sources: [], error: error.toString() });
+  }
+}
+
+async function wipeDatabase() {
+  try {
+    const response = await fetch('http://localhost:8000/wipe-db', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    const data = await response.json();
+    console.log('Wipe DB response:', data);
+    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: data.status, message: data.message });
+  } catch (error) {
+    console.error('Error wiping database:', error);
+    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: 'error', message: error.toString() });
+  }
+}
 
 async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
   try {

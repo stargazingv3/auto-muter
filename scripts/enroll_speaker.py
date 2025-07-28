@@ -7,11 +7,18 @@ from pyannote.core import SlidingWindowFeature
 from pydub import AudioSegment
 from tqdm import tqdm
 import tempfile
+import sqlite3
+import uuid
 
 # --- Configuration ---
 HF_TOKEN = os.getenv("HF_AUTH_TOKEN")
 if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
+
+# --- Database Configuration ---
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers.db')
+SPEAKERS_DIR = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers')
+os.makedirs(SPEAKERS_DIR, exist_ok=True)
 
 def convert_to_wav(audio_path, target_sr=16000):
     """
@@ -22,7 +29,6 @@ def convert_to_wav(audio_path, target_sr=16000):
         audio = AudioSegment.from_file(audio_path)
         audio = audio.set_frame_rate(target_sr).set_channels(1)
         
-        # Create a temporary file to store the WAV data
         temp_wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         audio.export(temp_wav.name, format="wav")
         return temp_wav.name
@@ -30,18 +36,35 @@ def convert_to_wav(audio_path, target_sr=16000):
         print(f"Warning: Could not process file {audio_path} with pydub. Skipping. Error: {e}")
         return None
 
-def enroll_speaker_from_path(input_path, output_file):
+def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp):
     """
-    Generates a robust speaker embedding from audio files using the pyannote/embedding model.
+    Generates a speaker embedding and registers the speaker in the database.
+    The embedding is stored directly in the database as a BLOB.
     """
     if not os.path.exists(input_path):
         print(f"Error: Input path not found at {input_path}")
         return
 
+    # --- Database Connection ---
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # --- Check if speaker already exists ---
+    cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+    speaker_row = cursor.fetchone()
+    
+    if speaker_row:
+        print(f"Speaker '{speaker_name}' already exists. Adding new source to existing speaker.")
+        speaker_id = speaker_row[0]
+    else:
+        print(f"Speaker '{speaker_name}' not found. Creating new speaker entry.")
+        cursor.execute("INSERT INTO speakers (name) VALUES (?)", (speaker_name,))
+        speaker_id = cursor.lastrowid
+        print(f"New speaker '{speaker_name}' created with ID: {speaker_id}")
+
     # --- Model Loading ---
     print("Loading the speaker embedding model (pyannote/embedding)...")
     try:
-        # This model configuration should match main.py
         inference_model = Inference(
             "pyannote/embedding", 
             window="whole", 
@@ -50,89 +73,70 @@ def enroll_speaker_from_path(input_path, output_file):
         print("Model loaded successfully.")
     except Exception as e:
         print(f"Error loading model. Ensure you have a valid Hugging Face token. Error: {e}")
+        conn.close()
         return
 
-    # --- Audio File Discovery ---
-    audio_files = []
-    if os.path.isdir(input_path):
-        print(f"Input is a directory. Searching for audio files in: {input_path}")
-        for root, _, files in os.walk(input_path):
-            for file in files:
-                if file.lower().endswith(('.wav', '.mp3', '.flac', '.m4a')):
-                    audio_files.append(os.path.join(root, file))
-        print(f"Found {len(audio_files)} audio files.")
-    elif os.path.isfile(input_path):
-        print(f"Input is a single file: {input_path}")
-        audio_files.append(input_path)
-    
-    if not audio_files:
-        print("No audio files found to process.")
-        return
+    # --- Audio File Processing ---
+    temp_wav_path = None
+    try:
+        temp_wav_path = convert_to_wav(input_path)
+        if temp_wav_path is None:
+            raise ValueError("Failed to convert audio to WAV format.")
 
-    # --- Embedding Generation ---
-    all_embeddings = []
-    temp_files_to_clean = []
-    print("Generating embeddings for each audio file...")
-    for audio_path in tqdm(audio_files, desc="Processing files"):
-        temp_wav_path = None
-        try:
-            # pyannote.audio's Inference can be sensitive to formats, so we convert to WAV first.
-            temp_wav_path = convert_to_wav(audio_path)
-            if temp_wav_path is None:
-                continue
-            temp_files_to_clean.append(temp_wav_path)
+        embedding_output = inference_model(temp_wav_path)
+        
+        if isinstance(embedding_output, SlidingWindowFeature):
+            embedding_np = embedding_output.data.mean(axis=0)
+        else:
+            embedding_np = np.asarray(embedding_output)
 
-            # Generate the embedding
-            embedding_output = inference_model(temp_wav_path)
-            
-            # The output might be a SlidingWindowFeature or a raw numpy array.
-            if isinstance(embedding_output, SlidingWindowFeature):
-                # Take the mean of embeddings over all windows to get a single vector
-                embedding = embedding_output.data.mean(axis=0)
-            else:
-                embedding = np.asarray(embedding_output)
+        # Convert numpy array to bytes for BLOB storage
+        embedding_blob = embedding_np.tobytes()
 
-            all_embeddings.append(embedding)
-        except Exception as e:
-            print(f"\nWarning: Could not process file {audio_path}. Skipping. Error: {e}")
-            continue
-        finally:
-            # Clean up the temporary WAV file immediately after use
-            if temp_wav_path and os.path.exists(temp_wav_path):
-                os.remove(temp_wav_path)
+        # --- Save Embedding and Record Source ---
+        # Add the source information to the database, including the embedding blob
+        cursor.execute(
+            "INSERT INTO sources (speaker_id, source_url, timestamp, embedding) VALUES (?, ?, ?, ?)",
+            (speaker_id, source_url, timestamp, embedding_blob)
+        )
+        conn.commit()
+        print("Source information and embedding successfully recorded in the database.")
 
-    if not all_embeddings:
-        print("Could not generate any embeddings.")
-        return
-
-    # --- Averaging and Saving ---
-    # To create a single, robust voiceprint, we average the embeddings.
-    stacked_embeddings = np.stack(all_embeddings)
-    mean_embedding = np.mean(stacked_embeddings, axis=0)
-    
-    print(f"\nGenerated a final embedding from {len(all_embeddings)} samples.")
-    print(f"Final embedding shape: {mean_embedding.shape}")
-
-    # Save the final embedding as a numpy array
-    np.save(output_file, mean_embedding)
-    print(f"Speaker embedding saved successfully to: {output_file}")
+    except Exception as e:
+        print(f"\nError during embedding generation or database operation: {e}")
+        conn.rollback() # Rollback changes on error
+    finally:
+        if temp_wav_path and os.path.exists(temp_wav_path):
+            os.remove(temp_wav_path)
+        conn.close()
+        print("Database connection closed.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Enroll a speaker by generating an embedding from audio files.")
+    parser = argparse.ArgumentParser(description="Enroll a speaker by generating an embedding and registering in the database.")
+    parser.add_argument(
+        "-n", "--name", 
+        type=str, 
+        required=True, 
+        help="The name of the speaker."
+    )
     parser.add_argument(
         "-i", "--input_path", 
         type=str, 
         required=True, 
-        help="Path to a single audio file or a directory containing audio files."
+        help="Path to the audio file for enrollment."
     )
     parser.add_argument(
-        "-o", "--output_file", 
+        "--url", 
         type=str, 
-        required=True, 
-        help="Path to save the final .npy embedding file."
+        help="Optional: The source URL of the audio (e.g., YouTube link)."
+    )
+    parser.add_argument(
+        "--timestamp", 
+        type=str, 
+        help="Optional: The timestamp within the source URL (e.g., '0:15-1:22')."
     )
     
     args = parser.parse_args()
     
-    enroll_speaker_from_path(args.input_path, args.output_file)
+    enroll_speaker_from_path(args.name, args.input_path, args.url, args.timestamp)
