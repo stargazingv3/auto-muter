@@ -401,6 +401,103 @@ async def wipe_db():
         load_model_and_embeddings()
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
+@app.delete("/speaker/{speaker_name}")
+async def delete_speaker(speaker_name: str):
+    """
+    Deletes a speaker and all their associated sources from the database.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # First, get the speaker's ID
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"status": "error", "message": "Speaker not found."}
+        
+        speaker_id = speaker_row[0]
+        
+        # Delete all sources for this speaker
+        cursor.execute("DELETE FROM sources WHERE speaker_id = ?", (speaker_id,))
+        
+        # Delete the speaker itself
+        cursor.execute("DELETE FROM speakers WHERE id = ?", (speaker_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Reload the embeddings into memory to reflect the change
+        load_model_and_embeddings()
+        
+        return {"status": "success", "message": f"Speaker '{speaker_name}' and all their sources have been deleted."}
+
+    except sqlite3.Error as e:
+        print(f"Database error while deleting speaker: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"status": "error", "message": f"Database error: {e}"}
+
+@app.delete("/source")
+async def delete_source(payload: dict = Body(...)):
+    """
+    Deletes a specific source for a speaker.
+    """
+    speaker_name = payload.get("speakerName")
+    source_url = payload.get("sourceUrl")
+    timestamp = payload.get("timestamp")
+
+    if not speaker_name or not source_url:
+        return {"status": "error", "message": "Missing speaker name or source URL."}
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Get the speaker's ID
+        cursor.execute("SELECT id FROM speakers WHERE name = ?", (speaker_name,))
+        speaker_row = cursor.fetchone()
+        
+        if not speaker_row:
+            conn.close()
+            return {"status": "error", "message": "Speaker not found."}
+        
+        speaker_id = speaker_row[0]
+        
+        # Delete the specific source
+        # This handles the case where timestamp might be NULL
+        if timestamp:
+            cursor.execute(
+                "DELETE FROM sources WHERE speaker_id = ? AND source_url = ? AND timestamp = ?",
+                (speaker_id, source_url, timestamp)
+            )
+        else:
+            cursor.execute(
+                "DELETE FROM sources WHERE speaker_id = ? AND source_url = ? AND timestamp IS NULL",
+                (speaker_id, source_url)
+            )
+
+        if cursor.rowcount == 0:
+            conn.close()
+            return {"status": "error", "message": "Source not found for the given speaker."}
+
+        conn.commit()
+        conn.close()
+        
+        # Reload embeddings to reflect the change
+        load_model_and_embeddings()
+        
+        return {"status": "success", "message": "Source deleted successfully."}
+
+    except sqlite3.Error as e:
+        print(f"Database error while deleting source: {e}")
+        if 'conn' in locals() and conn:
+            conn.close()
+        return {"status": "error", "message": f"Database error: {e}"}
+
+
 @app.get("/get-speakers")
 async def get_speakers():
     """
