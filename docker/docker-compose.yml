@@ -4,8 +4,6 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: ikon/auto-muter-backend:aws
-    env_file:
-      - .env
     volumes:
       - ..:/app
       - /data:/data
