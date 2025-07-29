@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ikon/auto-muter-backend:latest
+    image: ikon/auto-muter-backend:aws
     env_file:
       - .env
     volumes:
