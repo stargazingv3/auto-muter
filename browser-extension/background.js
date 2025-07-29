@@ -1,3 +1,5 @@
+import { BACKEND_HOST, BACKEND_PORT } from './config.js';
+
 let isCapturing = false;
 
 chrome.runtime.onInstalled.addListener(async () => {
