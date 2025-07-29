@@ -263,7 +263,7 @@ def is_target_speaker(audio_data: bytes, userId: str) -> tuple[bool, float]:
             similarity_score = similarity.item()
             max_similarity_score = max(max_similarity_score, similarity_score)
             
-            THRESHOLD = 0.4
+            THRESHOLD = 0.2
             if similarity_score > THRESHOLD:
                 print(f"{log_prefix} MATCH: User {userId}, Speaker {speaker_name}, Similarity: {similarity_score:.4f}")
                 return True, similarity_score
