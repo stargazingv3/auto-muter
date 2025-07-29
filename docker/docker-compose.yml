@@ -18,7 +18,7 @@ services:
     #        - driver: nvidia
     #          count: all
     #          capabilities: [gpu]
-    shm_size: '16g'
+    shm_size: '4g'
     environment:
       - HF_AUTH_TOKEN
     user: "${PUID}:${PGID}"
