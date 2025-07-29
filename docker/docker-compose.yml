@@ -11,13 +11,13 @@ services:
       - "8000:8000"
     working_dir: /app
     command: ["uvicorn", "browser-extension.backend.main:app", "--host", "${BACKEND_HOST}", "--port", "8000"]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    #deploy:
+    #  resources:
+    #    reservations:
+    #      devices:
+    #        - driver: nvidia
+    #          count: all
+    #          capabilities: [gpu]
     shm_size: '16g'
     environment:
       - HF_AUTH_TOKEN
