@@ -101,7 +101,7 @@ async function deleteSpeaker(speakerName) {
       throw new Error("User ID not found.");
     }
     const encodedSpeakerName = encodeURIComponent(speakerName);
-    const response = await fetch(`http://localhost:8000/speaker/${encodedSpeakerName}?userId=${userId}`, {
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/speaker/${encodedSpeakerName}?userId=${userId}`, {
       method: 'DELETE',
     });
     const data = await response.json();
@@ -120,7 +120,7 @@ async function deleteSource(speakerName, sourceUrl, timestamp) {
     if (!userId) {
       throw new Error("User ID not found.");
     }
-    const response = await fetch('http://localhost:8000/source', {
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/source`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
@@ -143,7 +143,7 @@ async function getEnrolledSpeakers() {
     if (!userId) {
       throw new Error("User ID not found.");
     }
-    const response = await fetch(`http://localhost:8000/get-speakers?userId=${userId}`);
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/get-speakers?userId=${userId}`);
     const data = await response.json();
     console.log('Get enrolled speakers response:', data);
     chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: data.speakers || [] });
@@ -161,7 +161,7 @@ async function checkSpeaker(speakerName) {
     }
     // URL-encode the speaker name to handle spaces or special characters
     const encodedSpeakerName = encodeURIComponent(speakerName);
-    const response = await fetch(`http://localhost:8000/check-speaker/${encodedSpeakerName}?userId=${userId}`);
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/check-speaker/${encodedSpeakerName}?userId=${userId}`);
     const data = await response.json();
     console.log('Check speaker response:', data);
     // Forward the response from the backend to the popup
@@ -179,7 +179,7 @@ async function wipeDatabase() {
     if (!userId) {
       throw new Error("User ID not found.");
     }
-    const response = await fetch('http://localhost:8000/wipe-db', {
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/wipe-db`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -201,7 +201,7 @@ async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
     if (!userId) {
       throw new Error("User ID not found.");
     }
-    const response = await fetch('http://localhost:8000/enroll', {
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/enroll`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
