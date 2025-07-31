@@ -20,4 +20,4 @@ RUN mkdir -p /.cache && chmod 777 /.cache
 RUN mkdir -p /.local && chmod 777 /.local
 
 # Copy the rest of the application
-COPY browser-extension/backend /app
+COPY ./backend /app
