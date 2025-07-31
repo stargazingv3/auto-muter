@@ -48,7 +48,7 @@ async function startCapture(streamId, userId) {
     gainNode.connect(audioContext.destination); // Connect volume control to speakers
 
     // Connect to backend for processing
-    socket = new WebSocket(`wss://${BACKEND_HOST}:${BACKEND_PORT}/ws/${userId}`);
+    socket = new WebSocket(`ws://${BACKEND_HOST}:${BACKEND_PORT}/ws/${userId}`);
     socket.onopen = () => {
       console.log('Offscreen: WebSocket connection opened.');
       recordAndSend();
