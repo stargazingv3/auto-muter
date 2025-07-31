@@ -1,3 +1,5 @@
+import { BACKEND_HOST, BACKEND_PORT } from './config.js';
+
 let mediaRecorder;
 let socket;
 let audioContext;
@@ -8,15 +10,19 @@ let stream;
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.type === 'start-capture') {
     if (isCapturing) return;
-    await startCapture(message.streamId);
+    await startCapture(message.streamId, message.userId);
   } else if (message.type === 'stop-capture') {
     await stopCapture();
   }
 });
 
-async function startCapture(streamId) {
+async function startCapture(streamId, userId) {
   if (!streamId) {
     console.error('Offscreen: No stream ID received.');
+    return;
+  }
+  if (!userId) {
+    console.error('Offscreen: No user ID received.');
     return;
   }
 
@@ -42,7 +48,7 @@ async function startCapture(streamId) {
     gainNode.connect(audioContext.destination); // Connect volume control to speakers
 
     // Connect to backend for processing
-    socket = new WebSocket('ws://localhost:8000/ws');
+    socket = new WebSocket(`ws://${BACKEND_HOST}:${BACKEND_PORT}/ws/${userId}`);
     socket.onopen = () => {
       console.log('Offscreen: WebSocket connection opened.');
       recordAndSend();

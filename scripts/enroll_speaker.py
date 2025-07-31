@@ -16,9 +16,7 @@ if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
 
 # --- Database Configuration ---
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers.db')
-SPEAKERS_DIR = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers')
-os.makedirs(SPEAKERS_DIR, exist_ok=True)
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers.db')
 
 def convert_to_wav(audio_path, target_sr=16000):
     """
@@ -36,7 +34,7 @@ def convert_to_wav(audio_path, target_sr=16000):
         print(f"Warning: Could not process file {audio_path} with pydub. Skipping. Error: {e}")
         return None
 
-def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp):
+def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp, db_path):
     """
     Generates a speaker embedding and registers the speaker in the database.
     The embedding is stored directly in the database as a BLOB.
@@ -46,7 +44,8 @@ def enroll_speaker_from_path(speaker_name, input_path, source_url, timestamp):
         return
 
     # --- Database Connection ---
-    conn = sqlite3.connect(DB_PATH)
+    print(f"Connecting to database: {db_path}")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     # --- Check if speaker already exists ---
@@ -136,7 +135,13 @@ if __name__ == "__main__":
         type=str, 
         help="Optional: The timestamp within the source URL (e.g., '0:15-1:22')."
     )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=DEFAULT_DB_PATH,
+        help="Path to the speaker database file."
+    )
     
     args = parser.parse_args()
     
-    enroll_speaker_from_path(args.name, args.input_path, args.url, args.timestamp)
+    enroll_speaker_from_path(args.name, args.input_path, args.url, args.timestamp, args.db_path)
