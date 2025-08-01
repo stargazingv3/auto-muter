@@ -9,10 +9,11 @@ services:
     ports:
       - "8000:8000"
     working_dir: /app
-    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: sh -c "python -X utf8 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
     shm_size: '2g'
     environment:
       - HF_AUTH_TOKEN
+      - PYTHONIOENCODING
 
 
 networks:
