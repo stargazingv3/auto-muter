@@ -41,3 +41,48 @@ Now you are inside the container's shell and can run the application.
 ## How it works
 
 The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it uses `pulsectl` to mute the system audio. When the target speaker stops talking, the audio is unmuted.
+
+## TODO Checklist
+
+### Infrastructure & Performance
+- [ ] **Container Optimization**
+  - [ ] Reduce Docker container size
+
+- [ ] **EC2 Instance Optimization**
+  - [ ] Modify deployment to work on free-tier EC2 instances (t2.micro/t3.micro)
+  - [ ] Optimize resource usage to fit within free-tier limits
+  - [ ] Update deployment documentation for free-tier setup
+
+### Browser Extension
+- [ ] **Google Chrome Web Store**
+  - [ ] Adherence to policies and acceptance to store
+  - [ ] Update extension description and documentation
+  - [ ] Add good screenshots and a demo video
+  - [ ] Logos for favicon and actual extension
+
+### Technical Improvements
+- [ ] **Threshold Investigation**
+  - [ ] Investigate why target threshold needs to be set low
+  - [ ] Optimize speaker detection sensitivity
+  - [ ] Implement adaptive threshold adjustment
+  - [ ] Add configuration options for different environments
+
+- [ ] **Database Management**
+  - [ ] Move database storage from `browser-extension/backend/` to `backend/`
+  - [ ] Add database backup and recovery procedures
+
+- [ ] **Data Privacy & Storage**
+  - [ ] Implement storage policy for automatic database cleanup
+  - [ ] Add configurable data retention periods
+  - [ ] Create data wiping functionality for privacy compliance
+  - [ ] Document data handling and privacy policies
+
+### Documentation & Maintenance
+- [ ] **User Documentation**
+  - [ ] Create user installation guides for w/o Chrome store
+  - [ ] Create FAQ and common issues resolution
+  - [ ] Document configuration options and troubleshooting
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
