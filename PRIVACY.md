@@ -39,7 +39,10 @@ You have full control over your data. The Extension's popup provides the followi
 
 *   **Offline Mode:** You can disable the Extension at any time using the toggle in the popup. When disabled, no audio data is captured or sent to the server.
 *   **Delete a Speaker:** You can delete any enrolled speaker, which will remove their voice embeddings from our server.
-*   **Delete All My Data:** You can permanently delete all your data from our servers by clicking the "Delete All My Data" button. This action will erase your entire user database, including all enrolled voice embeddings. This action is irreversible.
+*   **Delete All My Data:** You can permanently delete all your data. This is a two-step process:
+        1.  First, the extension sends a request to our server to delete your entire user database, including all enrolled voice embeddings.
+        2.  Once the server confirms deletion, the extension will then clear its own local storage in your browser, removing your anonymous User ID and consent status.
+    This action is irreversible and fully resets the extension. All controls in the popup will be disabled until you close and reopen it, which will trigger the first-time consent screen again.
 
 ## 5. Data Sharing
 

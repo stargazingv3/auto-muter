@@ -85,6 +85,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'DELETE_USER_DATA':
         await deleteUserData();
         break;
+      case 'CLEAR_LOCAL_DATA':
+        await chrome.storage.local.clear();
+        sendResponse({ success: true });
+        break;
       case 'CHECK_SPEAKER':
         await checkSpeaker(request.speakerName);
         break;

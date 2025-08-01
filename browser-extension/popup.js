@@ -51,8 +51,11 @@ startStopButton.addEventListener('click', () => {
 });
 
 deleteDataButton.addEventListener('click', () => {
-  if (confirm("Are you sure you want to DELETE ALL YOUR DATA? This action cannot be undone and will permanently remove all your enrolled speakers.")) {
-    showStatus('Deleting all data...', 'black');
+  if (confirm("This will permanently delete all your data from our servers and from this browser. The extension will be reset. Continue?")) {
+    showStatus('Deleting server data...', 'black');
+    // Disable buttons to prevent multiple clicks
+    deleteDataButton.disabled = true;
+    resetDbButton.disabled = true;
     chrome.runtime.sendMessage({ type: 'DELETE_USER_DATA' });
   }
 });
@@ -109,7 +112,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleEnrollmentStatus(request);
       break;
     case 'RESET_DB_STATUS':
+      handleDeleteStatus(request); // Can use the same handler for simple status updates
+      break;
     case 'DELETE_DATA_STATUS':
+      handleFullDeletion(request);
+      break;
     case 'DELETE_STATUS':
       handleDeleteStatus(request);
       break;
@@ -124,6 +131,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 // --- UI and Logic Functions ---
+
+function handleFullDeletion(request) {
+  if (request.status === 'success') {
+    showStatus('Server data deleted. Clearing local data...', 'green');
+    chrome.runtime.sendMessage({ type: 'CLEAR_LOCAL_DATA' }, (response) => {
+      if (chrome.runtime.lastError || !response.success) {
+        showStatus('Error clearing local data. Please reinstall the extension.', 'red');
+        return;
+      }
+      showStatus('All data cleared. The extension is reset.', 'green');
+      // Disable all controls to indicate a "dead" state until popup is reopened
+      document.querySelectorAll('button, input').forEach(el => el.disabled = true);
+    });
+  } else {
+    showStatus(`Server deletion failed: ${request.message}. Local data was not removed.`, 'red');
+    // Re-enable buttons on failure
+    deleteDataButton.disabled = false;
+    resetDbButton.disabled = false;
+  }
+}
 
 function updateCaptureButton(isCapturing) {
     startStopButton.textContent = isCapturing ? 'Stop' : 'Start';
@@ -296,7 +323,3 @@ function updateSpeakerList(request) {
     speakerList.innerHTML = '<li>No speakers enrolled.</li>';
   }
 }
-
-// --- Unique User ID Management ---
-// This is now handled in the background script's onInstalled listener.
-// The popup no longer needs to manage the user ID directly.
