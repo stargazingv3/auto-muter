@@ -73,10 +73,10 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
 
 - [ ] **Data Privacy & User Consent**
   - [x] Create and host a comprehensive Privacy Policy.
-  - [ ] Implement a one-time user consent screen on first installation.
+  - [x] Implement a one-time user consent screen on first installation.
   - [ ] Add configurable data retention policy for database cleanup
   - [ ] Add an "Offline Mode" toggle to disable data collection.
-  - [ ] Ensure "Delete All My Data" functionality is easily accessible.
+  - [ ] Ensure "Delete All My Data" also deletes any local storage so next launch brings up one-time consent like first install.
   - [ ] Add a link to the Privacy Policy within the extension.
 
 ### Documentation & Maintenance
