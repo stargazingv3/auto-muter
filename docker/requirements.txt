@@ -1,5 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 pyannote.audio
-pulsectl
 torch
 torchaudio
 sounddevice

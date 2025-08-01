@@ -40,7 +40,7 @@ Now you are inside the container's shell and can run the application.
 
 ## How it works
 
-The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it uses `pulsectl` to mute the system audio. When the target speaker stops talking, the audio is unmuted.
+The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it sets the tab value to 0. When the target speaker stops talking, the audio is unmuted.
 
 ## TODO Checklist
 

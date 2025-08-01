@@ -3,25 +3,17 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ikon/auto-muter-backend:aws
+    image: ikon/auto-muter-backend:aws-cpu
     volumes:
       - ..:/app
-      - /data:/data
     ports:
       - "8000:8000"
     working_dir: /app
-    command: ["uvicorn", "backend.main:app", "--host", "${BACKEND_HOST}", "--port", "8000"]
-    #deploy:
-    #  resources:
-    #    reservations:
-    #      devices:
-    #        - driver: nvidia
-    #          count: all
-    #          capabilities: [gpu]
-    shm_size: '4g'
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    shm_size: '2g'
     environment:
       - HF_AUTH_TOKEN
-    user: "${PUID}:${PGID}"
+
 
 networks:
   default:
