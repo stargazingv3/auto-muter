@@ -49,7 +49,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       'GET_STATE', 
       'TOGGLE_OFFLINE_MODE', 
       'GET_OFFLINE_STATUS',
-      'WIPE_DB' // Allow wiping data even in offline mode
+      'RESET_DB',
+      'DELETE_USER_DATA'
       ].includes(request.type)) {
         console.log(`Action blocked: Extension is in offline mode. Type: ${request.type}`);
         sendResponse({ error: "Extension is in offline mode." });

@@ -68,7 +68,7 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [ ] Add configuration options for different environments
 
 - [ ] **Database Management**
-  - [ ] Move database storage from `browser-extension/backend/` to `backend/`
+  - [x] Move database storage from `browser-extension/backend/` to `backend/databases/`
   - [ ] Add database backup and recovery procedures
 
 - [ ] **Data Privacy & User Consent**

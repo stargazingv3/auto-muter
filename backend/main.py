@@ -44,7 +44,10 @@ def get_db_path(userId: str) -> str:
     # Basic validation for userId to prevent path traversal issues
     if not userId or not all(c.isalnum() or c in '-_' for c in userId):
         raise ValueError("Invalid userId format.")
-    return f"/app/browser-extension/backend/speakers_{userId}.db"
+    
+    db_dir = "/app/backend/databases"
+    os.makedirs(db_dir, exist_ok=True) # Ensure the directory exists
+    return f"{db_dir}/speakers_{userId}.db"
 
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +197,7 @@ async def enroll_speaker(payload: dict = Body(...)):
     db_path = get_db_path(userId)
     initialize_db(db_path)
 
-    temp_dir = "/app/browser-extension/backend/tmp"
+    temp_dir = "/app/backend/tmp"
     os.makedirs(temp_dir, exist_ok=True)
     downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}_{uuid.uuid4().hex}.wav")
 

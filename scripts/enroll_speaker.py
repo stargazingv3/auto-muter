@@ -16,7 +16,7 @@ if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
 
 # --- Database Configuration ---
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'browser-extension', 'backend', 'speakers.db')
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'backend', 'databases', 'speakers.db')
 
 def convert_to_wav(audio_path, target_sr=16000):
     """
