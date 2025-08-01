@@ -2,7 +2,8 @@
 const startStopButton = document.getElementById('startStopButton');
 const enrollForm = document.getElementById('enrollForm');
 const enrollStatus = document.getElementById('enrollStatus');
-const wipeDbButton = document.getElementById('wipeDbButton');
+const resetDbButton = document.getElementById('resetDbButton');
+const deleteDataButton = document.getElementById('deleteDataButton');
 const speakerList = document.getElementById('speakerList');
 const refreshSpeakersButton = document.getElementById('refreshSpeakers');
 const offlineModeToggle = document.getElementById('offlineModeToggle');
@@ -49,10 +50,17 @@ startStopButton.addEventListener('click', () => {
   });
 });
 
-wipeDbButton.addEventListener('click', () => {
-  if (confirm("Are you sure you want to DELETE ALL YOUR DATA? This action cannot be undone.")) {
+deleteDataButton.addEventListener('click', () => {
+  if (confirm("Are you sure you want to DELETE ALL YOUR DATA? This action cannot be undone and will permanently remove all your enrolled speakers.")) {
     showStatus('Deleting all data...', 'black');
-    chrome.runtime.sendMessage({ type: 'WIPE_DB' });
+    chrome.runtime.sendMessage({ type: 'DELETE_USER_DATA' });
+  }
+});
+
+resetDbButton.addEventListener('click', () => {
+  if (confirm("Are you sure you want to reset the database? This will delete all enrolled speakers and start fresh.")) {
+    showStatus('Resetting database...', 'black');
+    chrome.runtime.sendMessage({ type: 'RESET_DB' });
   }
 });
 
@@ -100,7 +108,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'ENROLLMENT_STATUS':
       handleEnrollmentStatus(request);
       break;
-    case 'WIPE_DB_STATUS':
+    case 'RESET_DB_STATUS':
+    case 'DELETE_DATA_STATUS':
     case 'DELETE_STATUS':
       handleDeleteStatus(request);
       break;

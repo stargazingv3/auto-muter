@@ -78,8 +78,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'ENROLL_SPEAKER':
         await enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
         break;
-      case 'WIPE_DB':
-        await wipeDatabase();
+      case 'RESET_DB':
+        await resetDatabase();
+        break;
+      case 'DELETE_USER_DATA':
+        await deleteUserData();
         break;
       case 'CHECK_SPEAKER':
         await checkSpeaker(request.speakerName);
@@ -196,19 +199,35 @@ async function checkSpeaker(speakerName) {
   }
 }
 
-async function wipeDatabase() {
+async function resetDatabase() {
   try {
     const userId = await getUserId();
     if (!userId) throw new Error("User ID not found.");
-    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/wipe-db`, {
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/reset-db`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     });
     const data = await response.json();
-    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: data.status, message: data.message });
+    chrome.runtime.sendMessage({ type: 'RESET_DB_STATUS', status: data.status, message: data.message });
   } catch (error) {
-    chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: 'error', message: error.toString() });
+    chrome.runtime.sendMessage({ type: 'RESET_DB_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function deleteUserData() {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error("User ID not found.");
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/delete-user-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await response.json();
+    chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: data.status, message: data.message });
+  } catch (error) {
+    chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: 'error', message: error.toString() });
   }
 }
 
