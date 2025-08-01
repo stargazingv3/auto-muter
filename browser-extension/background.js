@@ -1,13 +1,21 @@
 import { BACKEND_HOST, BACKEND_PORT } from './config.js';
 
-let isCapturing = false;
+// --- Installation and Consent ---
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    // Check for existing user ID, create if not found
+    const { userId } = await chrome.storage.local.get('userId');
+    if (!userId) {
+      const newUserId = self.crypto.randomUUID();
+      await chrome.storage.local.set({ userId: newUserId });
+      console.log('New user ID generated:', newUserId);
+    }
+    
+    // Set default offline mode to false
+    await chrome.storage.local.set({ isOffline: false });
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const { userId } = await chrome.storage.local.get('userId');
-  if (!userId) {
-    const newUserId = self.crypto.randomUUID();
-    await chrome.storage.local.set({ userId: newUserId });
-    console.log('New user ID generated:', newUserId);
+    // Open the consent page
+    chrome.tabs.create({ url: 'consent.html' });
   }
 });
 
@@ -17,99 +25,132 @@ async function getUserId() {
   return userId;
 }
 
-// Main message listener
+// --- Main Message Listener ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Use a an async IIFE (Immediately Invoked Function Expression) to handle async logic
-  // This is a common pattern for keeping the top-level of the listener synchronous
-  // to avoid issues with the service worker.
   (async () => {
-    if (request.type === 'GET_STATE') {
-      const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
-      sendResponse({ isCapturing: !!capturing });
-    } else if (request.type === 'START_CAPTURE') {
-      await startCapture();
-      sendResponse({ success: true });
-    } else if (request.type === 'STOP_CAPTURE') {
-      await stopCapture();
-      sendResponse({ success: true });
-    } else if (request.type === 'SET_MUTE') {
-      console.log(`Background: Received SET_MUTE message. Mute: ${request.mute}`);
-      try {
-        const { targetTabId } = await chrome.storage.session.get("targetTabId");
-        console.log(`Background: Retrieved targetTabId from storage: ${targetTabId}`);
+    // Check for consent before proceeding with most actions
+    const { userConsent } = await chrome.storage.local.get('userConsent');
+    if (!userConsent && ![
+      'GET_STATE', 
+      'GET_CONSENT_STATUS',
+      'TOGGLE_OFFLINE_MODE',
+      'GET_OFFLINE_STATUS'
+      ].includes(request.type)) {
+      console.log("Action blocked: User has not consented.");
+      // Optionally, open the consent page again
+      chrome.tabs.create({ url: 'consent.html' });
+      sendResponse({ error: "User consent required." });
+      return;
+    }
+    
+    // Check for offline mode
+    const { isOffline } = await chrome.storage.local.get('isOffline');
+    if (isOffline && ![
+      'GET_STATE', 
+      'TOGGLE_OFFLINE_MODE', 
+      'GET_OFFLINE_STATUS',
+      'WIPE_DB' // Allow wiping data even in offline mode
+      ].includes(request.type)) {
+        console.log(`Action blocked: Extension is in offline mode. Type: ${request.type}`);
+        sendResponse({ error: "Extension is in offline mode." });
+        return;
+    }
 
-        if (targetTabId) {
-          console.log(`Background: Attempting to update mute state for tab ${targetTabId} to ${request.mute}`);
-          await chrome.tabs.update(targetTabId, { muted: request.mute });
+    switch (request.type) {
+      case 'GET_STATE':
+        const { isCapturing } = await chrome.storage.session.get("isCapturing");
+        sendResponse({ isCapturing: !!isCapturing });
+        break;
+      case 'START_CAPTURE':
+        await startCapture();
+        sendResponse({ success: true });
+        break;
+      case 'STOP_CAPTURE':
+        await stopCapture();
+        sendResponse({ success: true });
+        break;
+      case 'SET_MUTE':
+        await handleSetMute(request.mute);
+        break;
+      case 'TEST_MUTE':
+        await handleTestMute();
+        break;
+      case 'ENROLL_SPEAKER':
+        await enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
+        break;
+      case 'WIPE_DB':
+        await wipeDatabase();
+        break;
+      case 'CHECK_SPEAKER':
+        await checkSpeaker(request.speakerName);
+        break;
+      case 'GET_ENROLLED_SPEAKERS':
+        await getEnrolledSpeakers();
+        break;
 
-          if (chrome.runtime.lastError) {
-            console.error(`Background: Error setting mute state: ${chrome.runtime.lastError.message}`);
-          } else {
-            console.log(`Background: Successfully updated mute state for tab ${targetTabId}.`);
-          }
-        } else {
-          console.error("Background: Could not find targetTabId in session storage. Cannot set mute state.");
+      case 'DELETE_SPEAKER':
+        await deleteSpeaker(request.speakerName);
+        break;
+      case 'DELETE_SOURCE':
+        await deleteSource(request.speakerName, request.sourceUrl, request.timestamp);
+        break;
+      case 'TOGGLE_OFFLINE_MODE':
+        const { isOffline: newOfflineState } = await chrome.storage.local.get('isOffline');
+        await chrome.storage.local.set({ isOffline: !newOfflineState });
+        sendResponse({ isOffline: !newOfflineState });
+        // If we are turning offline mode on, stop any active capture.
+        if (!newOfflineState) {
+          await stopCapture();
         }
-      } catch (error) {
-        console.error(`Background: An unexpected error occurred while setting mute state: ${error}`);
-      }
-    } else if (request.type === 'TEST_MUTE') {
-      console.log("Background: Received TEST_MUTE request.");
-      try {
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tabs.length > 0) {
-          const tabToMute = tabs[0];
-          // Toggle mute state for testing
-          const newMuteState = !tabToMute.mutedInfo.muted;
-          await chrome.tabs.update(tabToMute.id, { muted: newMuteState });
-          console.log(`Background (Test): Successfully toggled mute for tab ${tabToMute.id} to ${newMuteState}`);
-        } else {
-          console.error("Background (Test): No active tab found.");
-        }
-      } catch (error) {
-        console.error(`Background (Test): Error during test mute: ${error}`);
-      }
-    } else if (request.type === 'ENROLL_SPEAKER') {
-      console.log("Background: Received ENROLL_SPEAKER request.");
-      enrollSpeaker(request.speakerName, request.youtubeUrl, request.startTime, request.endTime);
-    } else if (request.type === 'WIPE_DB') {
-      console.log("Background: Received WIPE_DB request.");
-      wipeDatabase();
-    } else if (request.type === 'CHECK_SPEAKER') {
-      console.log("Background: Received CHECK_SPEAKER request for", request.speakerName);
-      checkSpeaker(request.speakerName);
-    } else if (request.type === 'GET_ENROLLED_SPEAKERS') {
-      console.log("Background: Received GET_ENROLLED_SPEAKERS request.");
-      getEnrolledSpeakers();
-    } else if (request.type === 'DELETE_SPEAKER') {
-      console.log("Background: Received DELETE_SPEAKER request for", request.speakerName);
-      deleteSpeaker(request.speakerName);
-    } else if (request.type === 'DELETE_SOURCE') {
-      console.log("Background: Received DELETE_SOURCE request for", request.speakerName);
-      deleteSource(request.speakerName, request.sourceUrl, request.timestamp);
+        break;
+      case 'GET_OFFLINE_STATUS':
+        sendResponse({ isOffline });
+        break;
     }
   })();
 
-  // Return true to indicate that we will respond asynchronously.
-  return true;
+  return true; // Indicate async response
 });
+
+// --- Action Handlers ---
+
+async function handleSetMute(mute) {
+    console.log(`Background: Received SET_MUTE message. Mute: ${mute}`);
+    try {
+        const { targetTabId } = await chrome.storage.session.get("targetTabId");
+        if (targetTabId) {
+            await chrome.tabs.update(targetTabId, { muted: mute });
+        } else {
+            console.error("Background: Could not find targetTabId. Cannot set mute.");
+        }
+    } catch (error) {
+        console.error(`Background: Error setting mute state: ${error}`);
+    }
+}
+
+async function handleTestMute() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+            const newMuteState = !tab.mutedInfo.muted;
+            await chrome.tabs.update(tab.id, { muted: newMuteState });
+        }
+    } catch (error) {
+        console.error(`Background (Test): Error during test mute: ${error}`);
+    }
+}
 
 async function deleteSpeaker(speakerName) {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
+    if (!userId) throw new Error("User ID not found.");
     const encodedSpeakerName = encodeURIComponent(speakerName);
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/speaker/${encodedSpeakerName}?userId=${userId}`, {
       method: 'DELETE',
     });
     const data = await response.json();
-    console.log('Delete speaker response:', data);
-    // Forward the status to the popup
     chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
   } catch (error) {
-    console.error('Error deleting speaker:', error);
     chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
   }
 }
@@ -117,22 +158,15 @@ async function deleteSpeaker(speakerName) {
 async function deleteSource(speakerName, sourceUrl, timestamp) {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
+    if (!userId) throw new Error("User ID not found.");
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/source`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ speakerName, sourceUrl, timestamp, userId }),
     });
     const data = await response.json();
-    console.log('Delete source response:', data);
-    // Forward the status to the popup
     chrome.runtime.sendMessage({ type: 'DELETE_STATUS', ...data });
   } catch (error) {
-    console.error('Error deleting source:', error);
     chrome.runtime.sendMessage({ type: 'DELETE_STATUS', status: 'error', message: error.toString() });
   }
 }
@@ -140,15 +174,11 @@ async function deleteSource(speakerName, sourceUrl, timestamp) {
 async function getEnrolledSpeakers() {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
+    if (!userId) throw new Error("User ID not found.");
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/get-speakers?userId=${userId}`);
     const data = await response.json();
-    console.log('Get enrolled speakers response:', data);
     chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: data.speakers || [] });
   } catch (error) {
-    console.error('Error getting enrolled speakers:', error);
     chrome.runtime.sendMessage({ type: 'ENROLLED_SPEAKERS_LIST', speakers: [], error: error.toString() });
   }
 }
@@ -156,19 +186,12 @@ async function getEnrolledSpeakers() {
 async function checkSpeaker(speakerName) {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
-    // URL-encode the speaker name to handle spaces or special characters
+    if (!userId) throw new Error("User ID not found.");
     const encodedSpeakerName = encodeURIComponent(speakerName);
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/check-speaker/${encodedSpeakerName}?userId=${userId}`);
     const data = await response.json();
-    console.log('Check speaker response:', data);
-    // Forward the response from the backend to the popup
     chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', ...data });
   } catch (error) {
-    console.error('Error checking speaker:', error);
-    // Send an error message back to the popup
     chrome.runtime.sendMessage({ type: 'SPEAKER_CHECK_RESULT', exists: false, sources: [], error: error.toString() });
   }
 }
@@ -176,21 +199,15 @@ async function checkSpeaker(speakerName) {
 async function wipeDatabase() {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
+    if (!userId) throw new Error("User ID not found.");
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/wipe-db`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     });
     const data = await response.json();
-    console.log('Wipe DB response:', data);
     chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: data.status, message: data.message });
   } catch (error) {
-    console.error('Error wiping database:', error);
     chrome.runtime.sendMessage({ type: 'WIPE_DB_STATUS', status: 'error', message: error.toString() });
   }
 }
@@ -198,79 +215,49 @@ async function wipeDatabase() {
 async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
   try {
     const userId = await getUserId();
-    if (!userId) {
-      throw new Error("User ID not found.");
-    }
+    if (!userId) throw new Error("User ID not found.");
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/enroll`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: speakerName,
-        url: youtubeUrl,
-        start: startTime,
-        end: endTime,
-        userId: userId,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: speakerName, url: youtubeUrl, start: startTime, end: endTime, userId }),
     });
     const data = await response.json();
-    console.log('Enrollment response:', data);
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: data.status, message: data.message });
   } catch (error) {
-    console.error('Error enrolling speaker:', error);
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: 'error', message: error.toString() });
   }
 }
 
 async function startCapture() {
   const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
-  if (capturing) {
-    console.log('Capture is already in progress.');
-    return;
-  }
+  if (capturing) return;
 
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tabs.length === 0) {
-    console.error('No active tab found.');
-    return;
-  }
-  const targetTabId = tabs[0].id;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
 
-  // Save state to session storage
-  await chrome.storage.session.set({ targetTabId: targetTabId, isCapturing: true });
-
-  await setupOffscreenDocument(targetTabId);
+  await chrome.storage.session.set({ targetTabId: tab.id, isCapturing: true });
+  await setupOffscreenDocument(tab.id);
   console.log('Background: Capture started.');
 }
 
 async function stopCapture() {
   const { isCapturing: capturing } = await chrome.storage.session.get("isCapturing");
-  if (!capturing) {
-    console.log('Capture is not in progress.');
-    return;
-  }
+  if (!capturing) return;
 
-  // Clean up storage
   await chrome.storage.session.remove(["targetTabId", "isCapturing"]);
-
-  // The offscreen document will close itself when capture stops.
   await chrome.runtime.sendMessage({ type: 'stop-capture' });
   console.log('Background: Capture stopped.');
 }
 
 // --- Offscreen Document Setup ---
-let creating; // A global promise to avoid racing createDocument calls
+let creating; 
 async function setupOffscreenDocument(tabId) {
-  const existingContexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT']
-  });
-
+  const existingContexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   const userId = await getUserId();
 
   if (existingContexts.length > 0) {
-    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId, userId: userId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId, userId });
     return;
   }
 
@@ -284,6 +271,6 @@ async function setupOffscreenDocument(tabId) {
     });
     await creating;
     creating = null;
-    chrome.runtime.sendMessage({ type: 'start-capture', streamId: streamId, userId: userId });
+    chrome.runtime.sendMessage({ type: 'start-capture', streamId, userId });
   }
 }

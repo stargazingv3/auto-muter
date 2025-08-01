@@ -1,0 +1,110 @@
+body {
+    font-family: sans-serif;
+    width: 350px;
+    padding: 10px;
+    background-color: #f9f9f9;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+h1 {
+    font-size: 1.2em;
+    text-align: center;
+    margin: 5px 0;
+    color: #333;
+}
+
+button {
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    background-color: #4a90e2;
+    color: white;
+    font-size: 1em;
+}
+
+button:hover {
+    background-color: #357abd;
+}
+
+.small-button {
+    padding: 3px 8px;
+    font-size: 0.8em;
+    background-color: #e0e0e0;
+    color: #333;
+}
+
+.small-button:hover {
+    background-color: #d0d0d0;
+}
+
+#enrollStatus {
+    text-align: center;
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+#speakerList, #speakerSourcesList {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: white;
+}
+
+#speakerList li, #speakerSourcesList li {
+    padding: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+}
+
+#speakerList li:last-child, #speakerSourcesList li:last-child {
+    border-bottom: none;
+}
+
+#speakerList li span, #speakerSourcesList li span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.scrollable-content {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 10px;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.back-button {
+    text-decoration: none;
+    color: #4a90e2;
+    font-size: 0.9em;
+}
+
+.footer-links {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 15px;
+    border-top: 1px solid #ddd;
+    padding-top: 10px;
+}
+
+.privacy-link {
+    font-size: 0.9em;
+    color: #4a90e2;
+    text-decoration: none;
+}

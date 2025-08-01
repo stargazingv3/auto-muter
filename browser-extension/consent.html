@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Muter - Consent</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to Auto Muter</h1>
+        <div class="scrollable-content">
+            <p>Before we start, please review our data handling practices.</p>
+            <p><strong>What the extension does:</strong> Auto Muter identifies when a specific person is speaking in a browser tab and automatically mutes it.</p>
+            <p><strong>What data is collected:</strong>
+                <ul>
+                    <li>To enroll a speaker, you provide a YouTube URL. We download the audio, create a mathematical "voice print," and then delete the original audio.</li>
+                    <li>When active, the extension sends short audio snippets from the tab to our server for analysis. These are **never stored** and are deleted immediately.</li>
+                </ul>
+            </p>
+            <p>By clicking "Agree," you consent to this data processing. For full details, please read our <a href="privacy.html" target="_blank">Privacy Policy</a>.</p>
+        </div>
+        <button id="agreeButton">Agree and Continue</button>
+    </div>
+    <script src="consent.js"></script>
+</body>
+</html>
