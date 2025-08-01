@@ -219,15 +219,23 @@ async function resetDatabase() {
 async function deleteUserData() {
   try {
     const userId = await getUserId();
-    if (!userId) throw new Error("User ID not found.");
+    if (!userId) {
+      // If there's no user ID, there's nothing on the server to delete.
+      // Report success so the popup can proceed with local wipe.
+      chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: 'success', message: 'No server data to delete.' });
+      return;
+    }
+
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/delete-user-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     });
     const data = await response.json();
+    // Simply forward the backend's response to the popup
     chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: data.status, message: data.message });
   } catch (error) {
+    console.error('Error deleting user data:', error);
     chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: 'error', message: error.toString() });
   }
 }
