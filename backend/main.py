@@ -44,7 +44,10 @@ def get_db_path(userId: str) -> str:
     # Basic validation for userId to prevent path traversal issues
     if not userId or not all(c.isalnum() or c in '-_' for c in userId):
         raise ValueError("Invalid userId format.")
-    return f"/app/browser-extension/backend/speakers_{userId}.db"
+    
+    db_dir = "/app/backend/databases"
+    os.makedirs(db_dir, exist_ok=True) # Ensure the directory exists
+    return f"{db_dir}/speakers_{userId}.db"
 
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +197,7 @@ async def enroll_speaker(payload: dict = Body(...)):
     db_path = get_db_path(userId)
     initialize_db(db_path)
 
-    temp_dir = "/app/browser-extension/backend/tmp"
+    temp_dir = "/app/backend/tmp"
     os.makedirs(temp_dir, exist_ok=True)
     downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}_{uuid.uuid4().hex}.wav")
 
@@ -278,8 +281,12 @@ def is_target_speaker(audio_data: bytes, userId: str) -> tuple[bool, float]:
         if saved_success_path and os.path.exists(saved_success_path):
             os.remove(saved_success_path)
 
-@app.post("/wipe-db")
-async def wipe_db(payload: dict = Body(...)):
+@app.post("/reset-db")
+async def reset_db(payload: dict = Body(...)):
+    """
+    Deletes a user's entire database and immediately re-initializes a new, empty one.
+    This is useful for a clean reset.
+    """
     userId = payload.get("userId")
     if not userId:
         return {"status": "error", "message": "Missing userId."}
@@ -287,20 +294,53 @@ async def wipe_db(payload: dict = Body(...)):
     db_path = get_db_path(userId)
     
     try:
+        # Clear in-memory data first
         if userId in speaker_embeddings:
             speaker_embeddings[userId].clear()
             print(f"In-memory embeddings cleared for user {userId}.")
 
+        # Delete the database file if it exists
         if os.path.exists(db_path):
             os.remove(db_path)
             print(f"Database file for user {userId} at {db_path} has been deleted.")
 
+        # Re-initialize a new, empty database
         initialize_db(db_path)
         print(f"Database for user {userId} re-initialized.")
 
-        return {"status": "success", "message": f"Database for user {userId} wiped and reinitialized."}
+        return {"status": "success", "message": f"Database for user {userId} has been reset."}
     except Exception as e:
-        print(f"An unexpected error occurred during DB wipe for user {userId}: {e}")
+        print(f"An unexpected error occurred during DB reset for user {userId}: {e}")
+        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+
+@app.post("/delete-user-data")
+async def delete_user_data(payload: dict = Body(...)):
+    """
+    Permanently deletes all data for a user, including their database file
+    and in-memory embeddings. Does not re-initialize the database.
+    """
+    userId = payload.get("userId")
+    if not userId:
+        return {"status": "error", "message": "Missing userId."}
+    
+    db_path = get_db_path(userId)
+    
+    try:
+        # Clear in-memory data
+        if userId in speaker_embeddings:
+            del speaker_embeddings[userId]
+            print(f"In-memory embeddings deleted for user {userId}.")
+
+        # Delete the database file
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            print(f"Database file for user {userId} at {db_path} has been permanently deleted.")
+            return {"status": "success", "message": f"All data for user {userId} has been deleted."}
+        else:
+            return {"status": "success", "message": "No data found for user {userId} to delete."}
+            
+    except Exception as e:
+        print(f"An unexpected error occurred during data deletion for user {userId}: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
 @app.delete("/speaker/{speaker_name}")

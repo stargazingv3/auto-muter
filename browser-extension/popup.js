@@ -1,11 +1,12 @@
 // --- Global Elements ---
 const startStopButton = document.getElementById('startStopButton');
-const testMuteButton = document.getElementById('testMuteButton');
 const enrollForm = document.getElementById('enrollForm');
 const enrollStatus = document.getElementById('enrollStatus');
-const wipeDbButton = document.getElementById('wipeDbButton');
+const resetDbButton = document.getElementById('resetDbButton');
+const deleteDataButton = document.getElementById('deleteDataButton');
 const speakerList = document.getElementById('speakerList');
 const refreshSpeakersButton = document.getElementById('refreshSpeakers');
+const offlineModeToggle = document.getElementById('offlineModeToggle');
 
 // --- Speaker Exists Section Elements ---
 const speakerExistsSection = document.getElementById('speakerExistsSection');
@@ -18,17 +19,18 @@ const useDifferentNameButton = document.getElementById('useDifferentNameButton')
 
 // --- Initial State Setup ---
 document.addEventListener('DOMContentLoaded', () => {
+  // Get capture state
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error(chrome.runtime.lastError.message);
-      return;
-    }
-    if (response && response.isCapturing) {
-      startStopButton.textContent = 'Stop';
-    } else {
-      startStopButton.textContent = 'Start';
-    }
+    if (chrome.runtime.lastError) return console.error(chrome.runtime.lastError.message);
+    if (response) updateCaptureButton(response.isCapturing);
   });
+
+  // Get offline mode status
+  chrome.runtime.sendMessage({ type: 'GET_OFFLINE_STATUS' }, (response) => {
+    if (chrome.runtime.lastError) return console.error(chrome.runtime.lastError.message);
+    if (response) updateOfflineModeUI(response.isOffline);
+  });
+
   refreshSpeakerList();
 });
 
@@ -37,18 +39,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
 startStopButton.addEventListener('click', () => {
   const action = startStopButton.textContent === 'Start' ? 'START_CAPTURE' : 'STOP_CAPTURE';
-  chrome.runtime.sendMessage({ type: action }, () => window.close());
+  chrome.runtime.sendMessage({ type: action }, (response) => {
+    if (chrome.runtime.lastError) return console.error(chrome.runtime.lastError.message);
+    if (response && response.error) {
+        showStatus(response.error, 'red');
+    } else {
+        updateCaptureButton(action === 'START_CAPTURE');
+        window.close();
+    }
+  });
 });
 
-testMuteButton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'TEST_MUTE' }, () => window.close());
-});
-
-wipeDbButton.addEventListener('click', () => {
-  if (confirm("Are you sure you want to WIPE THE ENTIRE DATABASE? This action cannot be undone.")) {
-    showStatus('Wiping database...', 'black');
-    chrome.runtime.sendMessage({ type: 'WIPE_DB' });
+deleteDataButton.addEventListener('click', () => {
+  if (confirm("This will permanently delete all your data from our servers and from this browser. The extension will be reset. Continue?")) {
+    showStatus('Deleting server data...', 'black');
+    // Disable buttons to prevent multiple clicks
+    deleteDataButton.disabled = true;
+    resetDbButton.disabled = true;
+    chrome.runtime.sendMessage({ type: 'DELETE_USER_DATA' });
   }
+});
+
+resetDbButton.addEventListener('click', () => {
+  if (confirm("Are you sure you want to reset the database? This will delete all enrolled speakers and start fresh.")) {
+    showStatus('Resetting database...', 'black');
+    chrome.runtime.sendMessage({ type: 'RESET_DB' });
+  }
+});
+
+offlineModeToggle.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ type: 'TOGGLE_OFFLINE_MODE' }, (response) => {
+        if (chrome.runtime.lastError) return console.error(chrome.runtime.lastError.message);
+        if (response) updateOfflineModeUI(response.isOffline);
+    });
 });
 
 refreshSpeakersButton.addEventListener('click', refreshSpeakerList);
@@ -88,7 +111,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'ENROLLMENT_STATUS':
       handleEnrollmentStatus(request);
       break;
-    case 'WIPE_DB_STATUS':
+    case 'RESET_DB_STATUS':
+      handleDeleteStatus(request); // Can use the same handler for simple status updates
+      break;
+    case 'DELETE_DATA_STATUS':
+      handleFullDeletion(request);
+      break;
     case 'DELETE_STATUS':
       handleDeleteStatus(request);
       break;
@@ -103,6 +131,48 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 // --- UI and Logic Functions ---
+
+function handleFullDeletion(request) {
+  if (request.status === 'success') {
+    showStatus('Server data deleted. Clearing local data...', 'green');
+    chrome.runtime.sendMessage({ type: 'CLEAR_LOCAL_DATA' }, (response) => {
+      if (chrome.runtime.lastError || !response.success) {
+        showStatus('Error clearing local data. Please reinstall the extension.', 'red');
+        return;
+      }
+      showStatus('All data cleared. The extension is reset.', 'green');
+      // Disable all controls to indicate a "dead" state until popup is reopened
+      document.querySelectorAll('button, input').forEach(el => el.disabled = true);
+    });
+  } else {
+    showStatus(`Server deletion failed: ${request.message}. Local data was not removed.`, 'red');
+    // Re-enable buttons on failure
+    deleteDataButton.disabled = false;
+    resetDbButton.disabled = false;
+  }
+}
+
+function updateCaptureButton(isCapturing) {
+    startStopButton.textContent = isCapturing ? 'Stop' : 'Start';
+}
+
+function updateOfflineModeUI(isOffline) {
+    offlineModeToggle.checked = isOffline;
+    // Disable most controls when in offline mode
+    const elementsToDisable = [
+        startStopButton,
+        enrollForm,
+        refreshSpeakersButton,
+        ...speakerList.querySelectorAll('button')
+    ];
+    elementsToDisable.forEach(el => el.disabled = isOffline);
+    if (isOffline) {
+        showStatus('Offline mode is ON. No data is being sent.', 'blue');
+        updateCaptureButton(false); // Show 'Start' but disabled
+    } else {
+        showStatus(''); // Clear status on going online
+    }
+}
 
 function proceedWithEnrollment() {
   const speakerName = document.getElementById('speakerName').value;
@@ -145,7 +215,7 @@ function handleSpeakerCheckResult(request) {
         
         const textSpan = document.createElement('span');
         textSpan.textContent = `${source.url}` + (source.timestamp ? ` (${source.timestamp})` : '');
-        textSpan.title = textSpan.textContent; // Full text on hover
+        textSpan.title = textSpan.textContent;
         
         const deleteBtn = document.createElement('button');
         deleteBtn.textContent = 'Delete';
@@ -189,7 +259,7 @@ function handleEnrollmentStatus(request) {
 function handleDeleteStatus(request) {
     if (request.status === 'success') {
         showStatus(request.message, 'green');
-        resetEnrollmentForm(); // Also reset the form in case we were in the middle of checking a speaker
+        resetEnrollmentForm();
         refreshSpeakerList();
     } else {
         showStatus(`Error: ${request.message}`, 'red');
@@ -221,7 +291,7 @@ function updateSpeakerList(request) {
   if (!speakerList) return;
   
   if (request.error) {
-    speakerList.innerHTML = '<li>Error loading list.</li>';
+    speakerList.innerHTML = `<li>Error: ${request.error}</li>`;
     console.error("Error loading speaker list:", request.error);
     return;
   }

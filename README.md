@@ -40,7 +40,7 @@ Now you are inside the container's shell and can run the application.
 
 ## How it works
 
-The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it uses `pulsectl` to mute the system audio. When the target speaker stops talking, the audio is unmuted.
+The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it sets the volume of just that tab to 0. When the target speaker stops talking, the audio is unmuted.
 
 ## TODO Checklist
 
@@ -68,14 +68,19 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [ ] Add configuration options for different environments
 
 - [ ] **Database Management**
-  - [ ] Move database storage from `browser-extension/backend/` to `backend/`
+  - [x] Move database storage from `browser-extension/backend/` to `backend/databases/`
   - [ ] Add database backup and recovery procedures
 
-- [ ] **Data Privacy & Storage**
-  - [ ] Implement storage policy for automatic database cleanup
-  - [ ] Add configurable data retention periods
-  - [ ] Create data wiping functionality for privacy compliance
-  - [ ] Document data handling and privacy policies
+- [ ] **Data Privacy & User Consent**
+  - [x] Create and host a comprehensive Privacy Policy.
+  - [x] Implement a one-time user consent screen on first installation.
+  - [ ] Add configurable data retention policy for database cleanup
+  - [ ] Add an "Offline Mode" toggle to disable data collection.
+  - [x] Ensure "Delete All My Data" provides clear user feedback and fully wipes local and server data.
+  - [ ] Ensure step-by-step deletion is updated with clear messages for local data 
+  - [ ] Update server-deletion to throw error if const userId = await getUserId(); fails to return UID
+  - [ ] Add a link to the Privacy Policy within the extension.
+  - [ ] Allow exporting user's DB info
 
 ### Documentation & Maintenance
 - [ ] **User Documentation**

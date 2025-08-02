@@ -1,53 +1,52 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Auto Muter</title>
-  <style>
-    body { font-family: sans-serif; width: 280px; text-align: center; padding: 5px; }
-    button { margin: 5px 0; cursor: pointer; }
-    hr { width: 100%; }
-    input { width: 95%; margin-bottom: 5px; }
-    .full-width { width: 100%; }
-    .small-button { width: auto; padding: 3px 6px; font-size: 0.8em; margin-left: 8px; }
-    #speakerList, #speakerSourcesList { list-style-type: none; padding-left: 5px; text-align: left; }
-    #speakerList li, #speakerSourcesList li { margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-  </style>
+    <meta charset="UTF-8">
+    <title>Auto Muter</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <button id="startStopButton" class="full-width">Start</button>
-  <hr>
-  <button id="testMuteButton" class="full-width">Test Mute</button>
-  <hr>
-  <h2>Enroll New Speaker</h2>
-  <form id="enrollForm">
-    <input type="text" id="speakerName" placeholder="Speaker Name" required>
-    <input type="url" id="youtubeUrl" placeholder="YouTube URL" required>
-    <input type="text" id="startTime" placeholder="Start (e.g., 01:23)">
-    <input type="text" id="endTime" placeholder="End (e.g., 02:45)">
-    <button type="submit" class="full-width">Enroll</button>
-  </form>
-  <p id="enrollStatus"></p>
+    <div class="container">
+        <h1>Auto Muter</h1>
+        <button id="startStopButton">Start</button>
+        <hr>
+        
+        <h2>Enroll New Speaker</h2>
+        <form id="enrollForm">
+            <input type="text" id="speakerName" placeholder="Speaker Name" required>
+            <input type="url" id="youtubeUrl" placeholder="YouTube URL" required>
+            <input type="text" id="startTime" placeholder="Start (e.g., 01:23)">
+            <input type="text" id="endTime" placeholder="End (e.g., 02:45)">
+            <button type="submit">Enroll</button>
+        </form>
+        <p id="enrollStatus"></p>
 
-  <div id="speakerExistsSection" style="display: none; padding: 10px; border: 1px solid #ccc; margin-top: 10px;">
-    <p id="speakerExistsMessage" style="font-weight: bold;"></p>
-    <div id="speakerSources" style="display: none; max-height: 120px; overflow-y: auto; margin-bottom: 10px;">
-        <strong>Existing Sources:</strong>
-        <ul id="speakerSourcesList"></ul>
+        <div id="speakerExistsSection" style="display: none;">
+            <p id="speakerExistsMessage"></p>
+            <div id="speakerSources" style="display: none;">
+                <strong>Existing Sources:</strong>
+                <ul id="speakerSourcesList"></ul>
+            </div>
+            <button type="button" id="addSampleButton">Add New Sample</button>
+            <button type="button" id="showSourcesButton">Show Sources</button>
+            <button type="button" id="useDifferentNameButton">Cancel</button>
+        </div>
+
+        <hr>
+        <h2>Enrolled Speakers</h2>
+        <button id="refreshSpeakers">Refresh List</button>
+        <ul id="speakerList"><li>Loading...</li></ul>
+        <hr>
+
+        <div class="footer-links">
+            <label for="offlineModeToggle">Offline Mode:</label>
+            <input type="checkbox" id="offlineModeToggle">
+        </div>
+        <button id="resetDbButton">Reset Database</button>
+        <button id="deleteDataButton">Delete All My Data</button>
+        <a href="privacy.html" class="privacy-link" target="_blank">Privacy Policy</a>
     </div>
-    <button type="button" id="addSampleButton" class="small-button">Add New Sample</button>
-    <button type="button" id="showSourcesButton" class="small-button">Show Sources</button>
-    <button type="button" id="useDifferentNameButton" class="small-button">Cancel</button>
-  </div>
-
-  <hr>
-  <h2>Enrolled Speakers</h2>
-  <button id="refreshSpeakers" class="full-width">Refresh List</button>
-  <ul id="speakerList">
-    <li>Loading...</li>
-  </ul>
-  <hr>
-  <button id="wipeDbButton" class="full-width">Wipe Entire Database</button>
-  <script src="popup.js"></script>
+    <script src="popup.js"></script>
 </body>
 </html>
 
