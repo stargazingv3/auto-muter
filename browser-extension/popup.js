@@ -12,6 +12,9 @@ const offlineModeToggle = document.getElementById('offlineModeToggle');
 const thresholdSlider = document.getElementById('thresholdSlider');
 const thresholdInput = document.getElementById('thresholdInput');
 const thresholdStatus = document.getElementById('thresholdStatus');
+const donationsSection = document.getElementById('donations');
+const paypalLink = document.getElementById('paypalLink');
+const venmoLink = document.getElementById('venmoLink');
 
 // --- Speaker Exists Section Elements ---
 const speakerExistsSection = document.getElementById('speakerExistsSection');
@@ -39,6 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshSpeakerList();
   // Load current threshold
   loadThreshold();
+  // Setup donation links visibility
+  setupDonations();
 });
 
 
@@ -357,6 +362,30 @@ function refreshSpeakerList() {
   if (speakerList) {
     speakerList.innerHTML = '<li>Loading...</li>';
     chrome.runtime.sendMessage({ type: 'GET_ENROLLED_SPEAKERS' });
+  }
+}
+
+function setupDonations() {
+  try {
+    // Import dynamically to avoid bundling issues; config exports constants
+    import('./config.js').then(({ PAYPAL_LINK, VENMO_LINK }) => {
+      let show = false;
+      if (PAYPAL_LINK) {
+        paypalLink.href = PAYPAL_LINK;
+        paypalLink.style.display = 'inline-block';
+        show = true;
+      }
+      if (VENMO_LINK) {
+        venmoLink.href = VENMO_LINK;
+        venmoLink.style.display = 'inline-block';
+        show = true;
+      }
+      donationsSection.style.display = show ? 'block' : 'none';
+    }).catch(() => {
+      donationsSection.style.display = 'none';
+    });
+  } catch (e) {
+    donationsSection.style.display = 'none';
   }
 }
 

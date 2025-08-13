@@ -108,3 +108,10 @@ button:hover {
     color: #4a90e2;
     text-decoration: none;
 }
+
+.donations {
+    margin-top: 10px;
+}
+.donation-links a {
+    margin-right: 12px;
+}

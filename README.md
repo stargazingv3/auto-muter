@@ -65,6 +65,7 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [ ] Update extension description and documentation
   - [ ] Add good screenshots and a demo video
   - [ ] Logos for favicon and actual extension
+  - [ ] Logos for donation sites
 
 ### Technical Improvements
 - [ ] Allow file uploads instead of only youtube links
