@@ -83,6 +83,59 @@ def get_user_threshold(userId: str) -> float:
     except Exception:
         return default_similarity_threshold
 
+def ensure_settings_table(conn: sqlite3.Connection):
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+
+def get_threshold_from_db(db_path: str) -> float:
+    try:
+        conn = sqlite3.connect(db_path)
+        ensure_settings_table(conn)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?", ("threshold",))
+        row = cursor.fetchone()
+        if row is None:
+            # Initialize with default if missing
+            cursor.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", ("threshold", str(default_similarity_threshold)))
+            conn.commit()
+            return default_similarity_threshold
+        try:
+            return float(row[0])
+        except Exception:
+            return default_similarity_threshold
+    except Exception:
+        return default_similarity_threshold
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def set_threshold_in_db(db_path: str, threshold: float) -> float:
+    conn = sqlite3.connect(db_path)
+    try:
+        ensure_settings_table(conn)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", ("threshold", str(float(threshold))))
+        conn.commit()
+        return float(threshold)
+    finally:
+        conn.close()
+
+def load_threshold_for_user(userId: str):
+    db_path = get_db_path(userId)
+    initialize_db(db_path)
+    threshold_value = get_threshold_from_db(db_path)
+    user_similarity_thresholds[userId] = threshold_value
+
 def initialize_db(db_path: str):
     """Initializes a new database with the required schema if it doesn't exist."""
     if os.path.exists(db_path):
@@ -322,6 +375,9 @@ def is_target_speaker(audio_data: bytes, userId: str) -> tuple[bool, float]:
 @app.get("/threshold")
 async def get_threshold(userId: str = Query(...)):
     try:
+        # Ensure loaded from DB if not present
+        if userId not in user_similarity_thresholds:
+            load_threshold_for_user(userId)
         threshold_value = get_user_threshold(userId)
         return {"status": "success", "threshold": threshold_value}
     except Exception as e:
@@ -343,8 +399,12 @@ async def set_threshold(payload: dict = Body(...)):
         # Cosine similarity typically in [-1, 1]; we allow 0 to 1 for this use-case
         if not (0.0 <= threshold <= 1.0):
             return {"status": "error", "message": "Threshold must be between 0.0 and 1.0."}
-        user_similarity_thresholds[userId] = threshold
-        return {"status": "success", "threshold": threshold}
+        # Persist in DB and update in-memory cache
+        db_path = get_db_path(userId)
+        initialize_db(db_path)
+        saved_value = set_threshold_in_db(db_path, threshold)
+        user_similarity_thresholds[userId] = saved_value
+        return {"status": "success", "threshold": saved_value}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -578,6 +638,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     print(f"WebSocket accepted for user {user_id}.")
     try:
+        # Load user's threshold at connection time
+        load_threshold_for_user(user_id)
         # Load user's embeddings on connection if not already loaded
         if user_id not in speaker_embeddings:
             load_embeddings_for_user(user_id)

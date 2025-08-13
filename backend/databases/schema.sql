@@ -17,3 +17,9 @@ CREATE TABLE sources (
 
 CREATE INDEX idx_speaker_name ON speakers (name);
 CREATE INDEX idx_source_speaker_id ON sources (speaker_id);
+
+-- Store simple key/value settings (e.g., threshold)
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

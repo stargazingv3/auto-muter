@@ -11,7 +11,6 @@ const refreshSpeakersButton = document.getElementById('refreshSpeakers');
 const offlineModeToggle = document.getElementById('offlineModeToggle');
 const thresholdSlider = document.getElementById('thresholdSlider');
 const thresholdInput = document.getElementById('thresholdInput');
-const saveThresholdButton = document.getElementById('saveThresholdButton');
 const thresholdStatus = document.getElementById('thresholdStatus');
 
 // --- Speaker Exists Section Elements ---
@@ -84,17 +83,17 @@ offlineModeToggle.addEventListener('change', () => {
 
 refreshSpeakersButton.addEventListener('click', refreshSpeakerList);
 
-// Threshold controls
+// Threshold controls (auto-save with debounce)
+let thresholdSaveTimer;
 thresholdSlider.addEventListener('input', () => {
   thresholdInput.value = Number(thresholdSlider.value).toFixed(2);
+  queueSaveThreshold();
 });
 thresholdInput.addEventListener('input', () => {
   const v = Math.min(1, Math.max(0, parseFloat(thresholdInput.value) || 0));
   thresholdInput.value = v.toFixed(2);
   thresholdSlider.value = v.toFixed(2);
-});
-saveThresholdButton.addEventListener('click', () => {
-  saveThreshold();
+  queueSaveThreshold();
 });
 
 enrollForm.addEventListener('submit', (event) => {
@@ -335,6 +334,14 @@ async function saveThreshold() {
     thresholdSlider.value = Number(data.threshold).toFixed(2);
     thresholdInput.value = Number(data.threshold).toFixed(2);
   });
+}
+
+function queueSaveThreshold() {
+  if (thresholdSaveTimer) clearTimeout(thresholdSaveTimer);
+  thresholdStatus.textContent = 'Saving...';
+  thresholdSaveTimer = setTimeout(() => {
+    saveThreshold();
+  }, 300);
 }
 
 function resetEnrollmentForm() {
