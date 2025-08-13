@@ -49,7 +49,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       'GET_STATE', 
       'TOGGLE_OFFLINE_MODE', 
       'GET_OFFLINE_STATUS',
-      'WIPE_DB' // Allow wiping data even in offline mode
+      'RESET_DB',
+      'DELETE_USER_DATA'
       ].includes(request.type)) {
         console.log(`Action blocked: Extension is in offline mode. Type: ${request.type}`);
         sendResponse({ error: "Extension is in offline mode." });
@@ -84,6 +85,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'DELETE_USER_DATA':
         await deleteUserData();
         break;
+      case 'CLEAR_LOCAL_DATA':
+        await chrome.storage.local.clear();
+        sendResponse({ success: true });
+        break;
       case 'CHECK_SPEAKER':
         await checkSpeaker(request.speakerName);
         break;
@@ -108,6 +113,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
       case 'GET_OFFLINE_STATUS':
         sendResponse({ isOffline });
+        break;
+      case 'DOWNLOAD_DB':
+        await downloadUserDb();
+        break;
+      case 'DOWNLOAD_CSV':
+        await downloadUserCsv();
         break;
     }
   })();
@@ -218,15 +229,23 @@ async function resetDatabase() {
 async function deleteUserData() {
   try {
     const userId = await getUserId();
-    if (!userId) throw new Error("User ID not found.");
+    if (!userId) {
+      // If there's no user ID, there's nothing on the server to delete.
+      // Report success so the popup can proceed with local wipe.
+      chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: 'success', message: 'No server data to delete.' });
+      return;
+    }
+
     const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/delete-user-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     });
     const data = await response.json();
+    // Simply forward the backend's response to the popup
     chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: data.status, message: data.message });
   } catch (error) {
+    console.error('Error deleting user data:', error);
     chrome.runtime.sendMessage({ type: 'DELETE_DATA_STATUS', status: 'error', message: error.toString() });
   }
 }
@@ -244,6 +263,30 @@ async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: data.status, message: data.message });
   } catch (error) {
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function downloadUserDb() {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error("User ID not found.");
+    const url = `http://${BACKEND_HOST}:${BACKEND_PORT}/export-db?userId=${encodeURIComponent(userId)}`;
+    const downloadId = await chrome.downloads.download({ url, filename: `${userId}.db`, saveAs: false, conflictAction: 'uniquify' });
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'success', downloadId });
+  } catch (error) {
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function downloadUserCsv() {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error("User ID not found.");
+    const url = `http://${BACKEND_HOST}:${BACKEND_PORT}/export-sources-csv?userId=${encodeURIComponent(userId)}`;
+    const downloadId = await chrome.downloads.download({ url, filename: `${userId}.csv`, saveAs: false, conflictAction: 'uniquify' });
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'success', downloadId });
+  } catch (error) {
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'error', message: error.toString() });
   }
 }
 
