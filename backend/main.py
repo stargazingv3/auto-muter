@@ -1,5 +1,5 @@
-from fastapi import FastAPI, WebSocket, Body, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, Body, Query, BackgroundTasks
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import torch
 import numpy as np
@@ -12,6 +12,9 @@ from datetime import datetime
 import uuid
 import subprocess
 import sqlite3
+import csv
+import shutil
+import tempfile
 
 # --- Configuration for saving audio ---
 SAVE_ERROR_AUDIO_DIR = "/app/error_audio_dumps"
@@ -62,25 +65,32 @@ def initialize_db(db_path: str):
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE speakers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        );
-        """)
-        cursor.execute("""
-        CREATE TABLE sources (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            speaker_id INTEGER NOT NULL,
-            source_url TEXT,
-            timestamp TEXT,
-            embedding BLOB NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (speaker_id) REFERENCES speakers (id)
-        );
-        """)
-        cursor.execute("CREATE INDEX idx_speaker_name ON speakers (name);")
-        cursor.execute("CREATE INDEX idx_source_speaker_id ON sources (speaker_id);")
+        schema_path = "/app/backend/databases/schema.sql"
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema_sql = f.read()
+            cursor.executescript(schema_sql)
+        except Exception as schema_err:
+            print(f"Warning: Failed to load schema from {schema_path}: {schema_err}. Falling back to inline schema.")
+            cursor.execute("""
+            CREATE TABLE speakers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+            """)
+            cursor.execute("""
+            CREATE TABLE sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                speaker_id INTEGER NOT NULL,
+                source_url TEXT,
+                timestamp TEXT,
+                embedding BLOB NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (speaker_id) REFERENCES speakers (id)
+            );
+            """)
+            cursor.execute("CREATE INDEX idx_speaker_name ON speakers (name);")
+            cursor.execute("CREATE INDEX idx_source_speaker_id ON sources (speaker_id);")
         conn.commit()
     except sqlite3.Error as e:
         print(f"Failed to initialize database {db_path}: {e}")
@@ -342,6 +352,88 @@ async def delete_user_data(payload: dict = Body(...)):
     except Exception as e:
         print(f"An unexpected error occurred during data deletion for user {userId}: {e}")
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+
+@app.get("/export-db")
+async def export_db(userId: str = Query(...), background_tasks: BackgroundTasks = None):
+    """
+    Streams a copy of the user's SQLite database file.
+    The downloaded filename is the user's UUID with .db extension.
+    """
+    db_path = get_db_path(userId)
+    initialize_db(db_path)
+
+    try:
+        temp_dir = "/app/backend/tmp"
+        os.makedirs(temp_dir, exist_ok=True)
+        # Create a unique temp copy to avoid locking issues
+        fd, temp_db_copy_path = tempfile.mkstemp(prefix=f"export_{userId}_", suffix=".db", dir=temp_dir)
+        os.close(fd)
+        shutil.copyfile(db_path, temp_db_copy_path)
+
+        if background_tasks is not None:
+            background_tasks.add_task(os.remove, temp_db_copy_path)
+
+        return FileResponse(
+            temp_db_copy_path,
+            media_type="application/x-sqlite3",
+            filename=f"{userId}.db",
+            background=background_tasks
+        )
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to export DB: {e}"}
+
+@app.get("/export-sources-csv")
+async def export_sources_csv(userId: str = Query(...), background_tasks: BackgroundTasks = None):
+    """
+    Exports the user's sources table to CSV, excluding the embedding BLOB.
+    The downloaded filename is the user's UUID with .csv extension.
+    """
+    db_path = get_db_path(userId)
+    initialize_db(db_path)
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Select all columns except the embedding BLOB from sources
+        cursor.execute(
+            """
+            SELECT id, speaker_id, source_url, timestamp, created_at
+            FROM sources
+            ORDER BY id ASC
+            """
+        )
+        rows = cursor.fetchall()
+
+        temp_dir = "/app/backend/tmp"
+        os.makedirs(temp_dir, exist_ok=True)
+        fd, temp_csv_path = tempfile.mkstemp(prefix=f"export_{userId}_", suffix=".csv", dir=temp_dir)
+        os.close(fd)
+
+        headers = ["id", "speaker_id", "source_url", "timestamp", "created_at"]
+        with open(temp_csv_path, mode="w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
+        conn.close()
+
+        if background_tasks is not None:
+            background_tasks.add_task(os.remove, temp_csv_path)
+
+        return FileResponse(
+            temp_csv_path,
+            media_type="text/csv",
+            filename=f"{userId}.csv",
+            background=background_tasks
+        )
+    except Exception as e:
+        try:
+            if 'conn' in locals() and conn:
+                conn.close()
+        except Exception:
+            pass
+        return {"status": "error", "message": f"Failed to export CSV: {e}"}
 
 @app.delete("/speaker/{speaker_name}")
 async def delete_speaker(speaker_name: str, userId: str = Query(...)):

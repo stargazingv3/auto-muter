@@ -1,6 +1,6 @@
 # Privacy Policy for Auto Muter Extension
 
-**Last Updated:** 2025-07-31
+**Last Updated:** 2025-08-13
 
 This Privacy Policy describes how the Auto Muter browser extension ("the Extension") collects, uses, and handles your data. Your privacy is important to us, and we are committed to protecting it.
 
@@ -44,6 +44,10 @@ You have full control over your data. The Extension's popup provides the followi
         2.  Once the server confirms deletion, the extension will then clear its own local storage in your browser, removing your anonymous User ID and consent status.
     This action is irreversible and fully resets the extension. All controls in the popup will be disabled until you close and reopen it, which will trigger the first-time consent screen again.
 
+*   **Data Export (Access Your Data):** You can request and download a copy of your data at any time from the popup:
+    *   **Download DB:** Downloads your entire SQLite database file. The downloaded filename will be your anonymous User ID with a `.db` extension (e.g., `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.db`).
+    *   **Download CSV (No Embeddings):** Downloads a CSV containing your source records (URL, optional timestamp, created date) but omits the audio embedding BLOBs. The filename is your anonymous User ID with a `.csv` extension.
+    
 ## 5. Data Sharing
 
 We do not share, sell, or rent your data to any third parties. All data collected is used exclusively to provide and improve the functionality of the Auto Muter Extension.
