@@ -26,9 +26,29 @@ os.makedirs(SAVE_SUCCESS_AUDIO_DIR, exist_ok=True)
 print(f"SUCCESS AUDIO DUMP DIRECTORY: {SAVE_SUCCESS_AUDIO_DIR}")
 
 # --- App and Model Setup ---
-HF_TOKEN = os.getenv("HF_AUTH_TOKEN")
+HF_TOKEN = os.getenv("HF_AUTH_TOKEN", "").strip()
 if not HF_TOKEN:
     print("WARNING: HF_AUTH_TOKEN environment variable not set. Model might not load.")
+else:
+    try:
+        HF_TOKEN.encode("ascii")
+    except UnicodeEncodeError:
+        raise RuntimeError(
+            "HF_AUTH_TOKEN contains non-ASCII characters. Please regenerate/copy a clean token (ASCII only)."
+        )
+
+# Ensure HF Hub user agent is ASCII-only to avoid HTTP header encoding errors
+HF_UA = os.getenv("HF_HUB_USER_AGENT", "AutoMuter/0.1").strip()
+try:
+    HF_UA.encode("ascii")
+except UnicodeEncodeError:
+    cleaned_ua = HF_UA.encode("ascii", "ignore").decode("ascii")
+    os.environ["HF_HUB_USER_AGENT"] = cleaned_ua
+    print(f"WARNING: Cleaned non-ASCII characters from HF_HUB_USER_AGENT. Using: {cleaned_ua}")
+else:
+    # Ensure env var is set explicitly so downstream libs pick it up
+    os.environ["HF_HUB_USER_AGENT"] = HF_UA
+print(f"Using HF_HUB_USER_AGENT: {os.environ['HF_HUB_USER_AGENT']}")
 
 app = FastAPI()
 
@@ -47,10 +67,7 @@ def get_db_path(userId: str) -> str:
     # Basic validation for userId to prevent path traversal issues
     if not userId or not all(c.isalnum() or c in '-_' for c in userId):
         raise ValueError("Invalid userId format.")
-    
-    db_dir = "/app/backend/databases"
-    os.makedirs(db_dir, exist_ok=True) # Ensure the directory exists
-    return f"{db_dir}/speakers_{userId}.db"
+    return f"/app/backend/speakers_{userId}.db"
 
 inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -155,7 +172,7 @@ async def startup_event():
     Loads the pyannote model. User embeddings are loaded on-demand.
     """
     global inference_model
-    print("Loading the speaker embedding model (pyannote/embedding)...")
+    print("Loading the speaker embedding model (pyannote/embedding)...", flush=True)
     try:
         inference_model = Inference(
             "pyannote/embedding", 
@@ -163,9 +180,9 @@ async def startup_event():
             use_auth_token=HF_TOKEN,
             device=device
         )
-        print("Pyannote model loaded successfully.")
+        print("Pyannote model loaded successfully.", flush=True)
     except Exception as e:
-        print(f"CRITICAL: Failed to load pyannote model: {e}")
+        print(f"CRITICAL: Failed to load pyannote model: {e}", flush=True)
         raise
 
 @app.get("/check-speaker/{speaker_name}")
@@ -207,6 +224,7 @@ async def enroll_speaker(payload: dict = Body(...)):
     db_path = get_db_path(userId)
     initialize_db(db_path)
 
+    temp_dir = "/app/backend/tmp"
     temp_dir = "/app/backend/tmp"
     os.makedirs(temp_dir, exist_ok=True)
     downloaded_audio_path = os.path.join(temp_dir, f"{speaker_name}_{uuid.uuid4().hex}.wav")
