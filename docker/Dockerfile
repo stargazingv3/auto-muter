@@ -1,12 +1,10 @@
 # --- Builder Stage ---
-# This stage installs all dependencies, including build tools.
-FROM python:3.10 AS builder
+# Use slim base to reduce total layers downloaded during build.
+FROM python:3.10-slim AS builder
 
-# Install system dependencies required for building wheels
-RUN apt-get update && apt-get install -y \
+# Install only build tools needed for compiling Python wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    ffmpeg \
-    libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -22,23 +20,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 # --- Final Stage ---
-# This stage creates the small production image.
+# This stage creates the slim production image.
 FROM python:3.10-slim
 
-# Install runtime system dependencies and locales package
+# Install minimal runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
-    locales \
     && rm -rf /var/lib/apt/lists/*
 
-# Generate and set the locale to prevent encoding errors
-RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
-    dpkg-reconfigure --frontend=noninteractive locales && \
-    locale-gen
-ENV LANG en_US.UTF-8
-ENV LANGUAGE en_US:en
-ENV LC_ALL en_US.UTF-8
+# Prefer C.UTF-8 which is available without generating locales
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONIOENCODING=UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
@@ -51,11 +47,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Create a non-root user to run the application
 RUN useradd --create-home appuser
 USER appuser
-
-# Set up necessary directories with correct permissions
-#RUN mkdir -p /app/browser-extension/backend/tmp
-#RUN mkdir -p /app/error_audio_dumps
-#RUN mkdir -p /app/success_audio_dumps
 
 # Copy the application code into the final image
 COPY --chown=appuser:appuser . .

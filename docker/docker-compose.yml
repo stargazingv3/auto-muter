@@ -13,7 +13,11 @@ services:
     shm_size: '2g'
     environment:
       - HF_AUTH_TOKEN
-      - PYTHONIOENCODING
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - PYTHONIOENCODING=UTF-8
+      - HF_HUB_DISABLE_TELEMETRY=1
+      - HF_HUB_USER_AGENT=AutoMuter/0.1
 
 
 networks:
