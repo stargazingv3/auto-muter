@@ -120,6 +120,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'DOWNLOAD_CSV':
         await downloadUserCsv();
         break;
+      case 'GET_THRESHOLD':
+        await handleGetThreshold(sendResponse);
+        break;
+      case 'SET_THRESHOLD':
+        await handleSetThreshold(request.threshold, sendResponse);
+        break;
     }
   })();
 
@@ -287,6 +293,34 @@ async function downloadUserCsv() {
     chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'success', downloadId });
   } catch (error) {
     chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function handleGetThreshold(sendResponse) {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error('User ID not found.');
+    const res = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/threshold?userId=${encodeURIComponent(userId)}`);
+    const data = await res.json();
+    sendResponse(data);
+  } catch (e) {
+    sendResponse({ status: 'error', message: e.toString() });
+  }
+}
+
+async function handleSetThreshold(threshold, sendResponse) {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error('User ID not found.');
+    const res = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/threshold`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, threshold })
+    });
+    const data = await res.json();
+    sendResponse(data);
+  } catch (e) {
+    sendResponse({ status: 'error', message: e.toString() });
   }
 }
 

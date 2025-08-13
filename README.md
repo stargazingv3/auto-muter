@@ -42,6 +42,12 @@ Now you are inside the container's shell and can run the application.
 
 The application uses `pyannote.audio` for speaker diarization to distinguish between different speakers in real-time. When the target speaker is detected, it sets the volume of just that tab to 0. When the target speaker stops talking, the audio is unmuted.
 
+### Similarity threshold
+
+- The system computes cosine similarity between the live audio embedding and each enrolled speaker embedding.
+- For non-matching audio, similarity is typically very close to 0; for similar audio it commonly ranges from about 0.1 and above.
+- The default threshold is set to 0.2 where users can increase or decrease the value to control how aggressive the muting is. Improving the similarity score calculation is future work.
+
 ## TODO Checklist
 
 ### Infrastructure & Performance

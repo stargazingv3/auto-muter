@@ -73,6 +73,15 @@ inference_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Structure: { userId: { speaker_name: embedding_tensor } }
 speaker_embeddings = {}
+default_similarity_threshold = 0.2
+# Structure: { userId: float threshold }
+user_similarity_thresholds: dict[str, float] = {}
+
+def get_user_threshold(userId: str) -> float:
+    try:
+        return float(user_similarity_thresholds.get(userId, default_similarity_threshold))
+    except Exception:
+        return default_similarity_threshold
 
 def initialize_db(db_path: str):
     """Initializes a new database with the required schema if it doesn't exist."""
@@ -289,13 +298,14 @@ def is_target_speaker(audio_data: bytes, userId: str) -> tuple[bool, float]:
         live_embedding_np = live_audio_embedding_output.data.mean(axis=0) if isinstance(live_audio_embedding_output, SlidingWindowFeature) else np.asarray(live_audio_embedding_output)
         live_audio_embedding = torch.from_numpy(live_embedding_np).to(device).unsqueeze(0)
         
+        # Read current threshold for this user on each inference so updates take effect immediately
+        threshold = get_user_threshold(userId)
         for speaker_name, enrolled_embedding in user_embeddings.items():
             similarity = torch.nn.functional.cosine_similarity(live_audio_embedding, enrolled_embedding)
             similarity_score = similarity.item()
             max_similarity_score = max(max_similarity_score, similarity_score)
             
-            THRESHOLD = 0.2
-            if similarity_score > THRESHOLD:
+            if similarity_score > threshold:
                 print(f"{log_prefix} MATCH: User {userId}, Speaker {speaker_name}, Similarity: {similarity_score:.4f}")
                 return True, similarity_score
 
@@ -308,6 +318,35 @@ def is_target_speaker(audio_data: bytes, userId: str) -> tuple[bool, float]:
     finally:
         if saved_success_path and os.path.exists(saved_success_path):
             os.remove(saved_success_path)
+
+@app.get("/threshold")
+async def get_threshold(userId: str = Query(...)):
+    try:
+        threshold_value = get_user_threshold(userId)
+        return {"status": "success", "threshold": threshold_value}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/threshold")
+async def set_threshold(payload: dict = Body(...)):
+    try:
+        userId = payload.get("userId")
+        threshold = payload.get("threshold")
+        if userId is None:
+            return {"status": "error", "message": "Missing userId."}
+        if threshold is None:
+            return {"status": "error", "message": "Missing threshold."}
+        try:
+            threshold = float(threshold)
+        except Exception:
+            return {"status": "error", "message": "Threshold must be a number."}
+        # Cosine similarity typically in [-1, 1]; we allow 0 to 1 for this use-case
+        if not (0.0 <= threshold <= 1.0):
+            return {"status": "error", "message": "Threshold must be between 0.0 and 1.0."}
+        user_similarity_thresholds[userId] = threshold
+        return {"status": "success", "threshold": threshold}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.post("/reset-db")
 async def reset_db(payload: dict = Body(...)):

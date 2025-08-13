@@ -9,6 +9,10 @@ const downloadCsvButton = document.getElementById('downloadCsvButton');
 const speakerList = document.getElementById('speakerList');
 const refreshSpeakersButton = document.getElementById('refreshSpeakers');
 const offlineModeToggle = document.getElementById('offlineModeToggle');
+const thresholdSlider = document.getElementById('thresholdSlider');
+const thresholdInput = document.getElementById('thresholdInput');
+const saveThresholdButton = document.getElementById('saveThresholdButton');
+const thresholdStatus = document.getElementById('thresholdStatus');
 
 // --- Speaker Exists Section Elements ---
 const speakerExistsSection = document.getElementById('speakerExistsSection');
@@ -34,6 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   refreshSpeakerList();
+  // Load current threshold
+  loadThreshold();
 });
 
 
@@ -77,6 +83,19 @@ offlineModeToggle.addEventListener('change', () => {
 });
 
 refreshSpeakersButton.addEventListener('click', refreshSpeakerList);
+
+// Threshold controls
+thresholdSlider.addEventListener('input', () => {
+  thresholdInput.value = Number(thresholdSlider.value).toFixed(2);
+});
+thresholdInput.addEventListener('input', () => {
+  const v = Math.min(1, Math.max(0, parseFloat(thresholdInput.value) || 0));
+  thresholdInput.value = v.toFixed(2);
+  thresholdSlider.value = v.toFixed(2);
+});
+saveThresholdButton.addEventListener('click', () => {
+  saveThreshold();
+});
 
 enrollForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -290,6 +309,32 @@ function handleDeleteStatus(request) {
 function showStatus(message, color = 'black') {
   enrollStatus.textContent = message;
   enrollStatus.style.color = color;
+}
+
+async function loadThreshold() {
+  chrome.runtime.sendMessage({ type: 'GET_THRESHOLD' }, (data) => {
+    if (!data || data.status !== 'success') {
+      thresholdStatus.textContent = (data && data.message) || 'Failed to load threshold';
+      return;
+    }
+    const t = Number(data.threshold ?? 0.2);
+    thresholdSlider.value = t.toFixed(2);
+    thresholdInput.value = t.toFixed(2);
+    thresholdStatus.textContent = '';
+  });
+}
+
+async function saveThreshold() {
+  const t = Math.min(1, Math.max(0, parseFloat(thresholdInput.value) || 0));
+  chrome.runtime.sendMessage({ type: 'SET_THRESHOLD', threshold: t }, (data) => {
+    if (!data || data.status !== 'success') {
+      thresholdStatus.textContent = (data && data.message) || 'Save failed';
+      return;
+    }
+    thresholdStatus.textContent = 'Saved';
+    thresholdSlider.value = Number(data.threshold).toFixed(2);
+    thresholdInput.value = Number(data.threshold).toFixed(2);
+  });
 }
 
 function resetEnrollmentForm() {
