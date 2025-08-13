@@ -77,12 +77,12 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [x] Create and host a comprehensive Privacy Policy.
   - [x] Implement a one-time user consent screen on first installation.
   - [ ] Add configurable data retention policy for database cleanup
-  - [ ] Add an "Offline Mode" toggle to disable data collection.
+  - [x] Add an "Offline Mode" toggle to disable data collection.
   - [x] Ensure "Delete All My Data" provides clear user feedback and fully wipes local and server data.
   - [ ] Ensure step-by-step deletion is updated with clear messages for local data 
   - [ ] Update server-deletion to throw error if const userId = await getUserId(); fails to return UID
   - [ ] Add a link to the Privacy Policy within the extension.
-  - [ ] Allow exporting user's DB info
+  - [x] Allow exporting user's DB info (Download DB or CSV without embeddings)
   - [ ] Update contact method
 
 ### Documentation & Maintenance

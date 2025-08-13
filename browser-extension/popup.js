@@ -4,6 +4,8 @@ const enrollForm = document.getElementById('enrollForm');
 const enrollStatus = document.getElementById('enrollStatus');
 const resetDbButton = document.getElementById('resetDbButton');
 const deleteDataButton = document.getElementById('deleteDataButton');
+const downloadDbButton = document.getElementById('downloadDbButton');
+const downloadCsvButton = document.getElementById('downloadCsvButton');
 const speakerList = document.getElementById('speakerList');
 const refreshSpeakersButton = document.getElementById('refreshSpeakers');
 const offlineModeToggle = document.getElementById('offlineModeToggle');
@@ -87,6 +89,16 @@ enrollForm.addEventListener('submit', (event) => {
   chrome.runtime.sendMessage({ type: 'CHECK_SPEAKER', speakerName });
 });
 
+downloadDbButton.addEventListener('click', () => {
+  showStatus('Preparing DB download...', 'black');
+  chrome.runtime.sendMessage({ type: 'DOWNLOAD_DB' });
+});
+
+downloadCsvButton.addEventListener('click', () => {
+  showStatus('Preparing CSV download...', 'black');
+  chrome.runtime.sendMessage({ type: 'DOWNLOAD_CSV' });
+});
+
 addSampleButton.addEventListener('click', () => {
   proceedWithEnrollment();
 });
@@ -122,6 +134,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       break;
     case 'ENROLLED_SPEAKERS_LIST':
       updateSpeakerList(request);
+      break;
+    case 'DOWNLOAD_STATUS':
+      if (request.status === 'success') {
+        showStatus('Download started. Check your browser downloads.', 'green');
+      } else {
+        showStatus(`Download failed: ${request.message}`, 'red');
+      }
       break;
     case 'SPEAKER_CHECK_RESULT':
       handleSpeakerCheckResult(request);
@@ -163,6 +182,8 @@ function updateOfflineModeUI(isOffline) {
         startStopButton,
         enrollForm,
         refreshSpeakersButton,
+        downloadDbButton,
+        downloadCsvButton,
         ...speakerList.querySelectorAll('button')
     ];
     elementsToDisable.forEach(el => el.disabled = isOffline);

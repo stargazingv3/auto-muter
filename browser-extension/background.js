@@ -114,6 +114,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'GET_OFFLINE_STATUS':
         sendResponse({ isOffline });
         break;
+      case 'DOWNLOAD_DB':
+        await downloadUserDb();
+        break;
+      case 'DOWNLOAD_CSV':
+        await downloadUserCsv();
+        break;
     }
   })();
 
@@ -257,6 +263,30 @@ async function enrollSpeaker(speakerName, youtubeUrl, startTime, endTime) {
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: data.status, message: data.message });
   } catch (error) {
     chrome.runtime.sendMessage({ type: 'ENROLLMENT_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function downloadUserDb() {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error("User ID not found.");
+    const url = `http://${BACKEND_HOST}:${BACKEND_PORT}/export-db?userId=${encodeURIComponent(userId)}`;
+    const downloadId = await chrome.downloads.download({ url, filename: `${userId}.db`, saveAs: false, conflictAction: 'uniquify' });
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'success', downloadId });
+  } catch (error) {
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'error', message: error.toString() });
+  }
+}
+
+async function downloadUserCsv() {
+  try {
+    const userId = await getUserId();
+    if (!userId) throw new Error("User ID not found.");
+    const url = `http://${BACKEND_HOST}:${BACKEND_PORT}/export-sources-csv?userId=${encodeURIComponent(userId)}`;
+    const downloadId = await chrome.downloads.download({ url, filename: `${userId}.csv`, saveAs: false, conflictAction: 'uniquify' });
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'success', downloadId });
+  } catch (error) {
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_STATUS', status: 'error', message: error.toString() });
   }
 }
 
