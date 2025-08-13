@@ -61,6 +61,8 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [ ] Logos for favicon and actual extension
 
 ### Technical Improvements
+- [ ] Allow file uploads instead of only youtube links
+- [ ] Tab selection or multi-tab implementation
 - [ ] **Threshold Investigation**
   - [ ] Investigate why target threshold needs to be set low
   - [ ] Optimize speaker detection sensitivity
@@ -81,6 +83,7 @@ The application uses `pyannote.audio` for speaker diarization to distinguish bet
   - [ ] Update server-deletion to throw error if const userId = await getUserId(); fails to return UID
   - [ ] Add a link to the Privacy Policy within the extension.
   - [ ] Allow exporting user's DB info
+  - [ ] Update contact method
 
 ### Documentation & Maintenance
 - [ ] **User Documentation**
